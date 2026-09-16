@@ -22,8 +22,9 @@ def seed():
 
     with Ses() as db:
         # ── Demo users ───────────────────────────────────────────────────
-        db.merge(User(id="usr_student_demo", display_name="Demo Student", role="student", xp=0, level=1))
-        db.merge(User(id="usr_teacher_demo", display_name="Demo Teacher", role="teacher", xp=0, level=1))
+        db.merge(User(id="usr_student_demo", display_name="Demo Student", role="student", xp=0, level=1, streak_days=0))
+        db.merge(User(id="usr_teacher_demo", display_name="Demo Teacher", role="teacher", xp=0, level=1, streak_days=0))
+        db.merge(User(id="usr_learner_demo", display_name="Demo Learner", role="individual_learner", xp=0, level=1, streak_days=0))
 
         # ── Topics ───────────────────────────────────────────────────────
         db.merge(Topic(

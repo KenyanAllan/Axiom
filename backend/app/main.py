@@ -8,7 +8,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.activities import router as activities_router
+from app.api.routes.classrooms import router as classrooms_router
 from app.api.routes.topics import router as topics_router
+from app.api.routes.workspaces import router as workspaces_router
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -37,7 +39,9 @@ app.add_middleware(
 # ── Routers ──────────────────────────────────────────────────────────────────
 
 app.include_router(activities_router)
+app.include_router(classrooms_router)
 app.include_router(topics_router)
+app.include_router(workspaces_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
