@@ -1,0 +1,42 @@
+[
+  {
+    "ParameterKey": "VpcId",
+    "ParameterValue": "vpc-XXXXXXXXX"
+  },
+  {
+    "ParameterKey": "PublicSubnetIds",
+    "ParameterValue": "subnet-AAAA,subnet-BBBB"
+  },
+  {
+    "ParameterKey": "PrivateSubnetIds",
+    "ParameterValue": "subnet-CCCC,subnet-DDDD"
+  },
+  {
+    "ParameterKey": "ImageUri",
+    "ParameterValue": "123456789012.dkr.ecr.us-east-1.amazonaws.com/axiom:latest"
+  },
+  {
+    "ParameterKey": "DatabaseUrl",
+    "ParameterValue": "postgresql+asyncpg://axiom:PASSWORD@your-aurora-cluster.us-east-1.rds.amazonaws.com:5432/axiom"
+  },
+  {
+    "ParameterKey": "SyncDatabaseUrl",
+    "ParameterValue": "postgresql+psycopg2://axiom:PASSWORD@your-aurora-cluster.us-east-1.rds.amazonaws.com:5432/axiom"
+  },
+  {
+    "ParameterKey": "RedisUrl",
+    "ParameterValue": "redis://your-elasticache-endpoint.cache.amazonaws.com:6379/0"
+  },
+  {
+    "ParameterKey": "JwtSecretKey",
+    "ParameterValue": "CHANGE-ME-to-a-random-64-char-string"
+  },
+  {
+    "ParameterKey": "S3BucketName",
+    "ParameterValue": "axiom-source-documents"
+  },
+  {
+    "ParameterKey": "CorsOrigins",
+    "ParameterValue": "https://your-frontend-domain.com"
+  }
+]

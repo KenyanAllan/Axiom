@@ -1,8 +1,7 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
-# System deps for psycopg2, asyncpg builds
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
@@ -12,6 +11,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Run migrations on startup is handled by the api service entrypoint in dev.
-# For prod, run: alembic upgrade head as a pre-task.
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["api"]
