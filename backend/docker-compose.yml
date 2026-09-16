@@ -1,0 +1,99 @@
+version: "3.9"
+
+services:
+  # ─── PostgreSQL 16 + pgvector ────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: apkgs_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: apkgs
+      POSTGRES_USER: apkgs
+      POSTGRES_PASSWORD: apkgs_dev_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_pgvector.sql:/docker-entrypoint-initdb.d/01_pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apkgs -d apkgs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Redis (Celery broker + result backend) ──────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: apkgs_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── FastAPI application ─────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: apkgs_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://apkgs:apkgs_dev_secret@postgres:5432/apkgs
+      SYNC_DATABASE_URL: postgresql+psycopg2://apkgs:apkgs_dev_secret@postgres:5432/apkgs
+      REDIS_URL: redis://redis:6379/0
+      AWS_DEFAULT_REGION: us-east-1
+      # In production, inject AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+      # via ECS task role or environment injection — never hard-code here.
+      BEDROCK_MODEL_ID: anthropic.claude-3-5-sonnet-20241022-v2:0
+      BEDROCK_EMBED_MODEL_ID: amazon.titan-embed-text-v2:0
+      LOG_LEVEL: debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app  # live-reload in dev; remove for prod
+    command: >
+      uvicorn app.main:app
+        --host 0.0.0.0
+        --port 8000
+        --reload
+        --log-level debug
+
+  # ─── Celery worker (ingestion tasks) ─────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: apkgs_worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://apkgs:apkgs_dev_secret@postgres:5432/apkgs
+      SYNC_DATABASE_URL: postgresql+psycopg2://apkgs:apkgs_dev_secret@postgres:5432/apkgs
+      REDIS_URL: redis://redis:6379/0
+      AWS_DEFAULT_REGION: us-east-1
+      BEDROCK_MODEL_ID: anthropic.claude-3-5-sonnet-20241022-v2:0
+      BEDROCK_EMBED_MODEL_ID: amazon.titan-embed-text-v2:0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A app.workers.celery_app worker
+        --loglevel=info
+        --concurrency=2
+        -Q ingestion,default
+
+volumes:
+  postgres_data:
+  redis_data:
