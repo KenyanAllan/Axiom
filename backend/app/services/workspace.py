@@ -173,10 +173,10 @@ async def delete_workspace(
         raise ValueError("Workspace not found")
 
     if workspace.user_id != user_id:
-        raise ValueError("Access denied — you do not own this workspace")
+        raise PermissionError("Access denied — you do not own this workspace")
 
     if workspace.is_classroom_shared:
-        raise ValueError("Cannot delete a classroom shared workspace")
+        raise PermissionError("Cannot delete a classroom shared workspace")
 
     await db.delete(workspace)
     await db.flush()

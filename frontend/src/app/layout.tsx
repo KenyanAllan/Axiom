@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "APKGS — Knowledge Graph Learning Workspace",
+  title: "Axiom — Knowledge Graph Learning Workspace",
   description:
-    "Autonomous Pedagogical Knowledge Graph System: a minimalist, distraction-free technical learning workspace.",
+    "Axiom: a minimalist, distraction-free technical learning workspace.",
 };
 
 export default function RootLayout({

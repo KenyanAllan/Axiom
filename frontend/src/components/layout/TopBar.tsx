@@ -6,10 +6,10 @@ export function TopBar() {
       {/* Brand only */}
       <div className="flex items-center gap-3">
         <div className="flex h-7 w-7 items-center justify-center rounded bg-primary text-xs font-bold text-primary-foreground">
-          AK
+          Ax
         </div>
         <span className="font-mono text-sm font-semibold tracking-tight">
-          APKGS
+          Axiom
         </span>
         <span className="font-mono text-xs text-muted-foreground">
           / v0.1.0 :: main :: workspace-active

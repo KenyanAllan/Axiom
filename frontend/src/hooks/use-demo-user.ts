@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import type { UserProfile } from "@/lib/types";
 
-const STORAGE_KEY = "apkgs_current_user";
+const STORAGE_KEY = "axiom_current_user";
 
 // Pre-seeded demo accounts
 const DEMO_USERS: Record<string, UserProfile> = {
@@ -28,7 +28,7 @@ const DEMO_USERS: Record<string, UserProfile> = {
 function getStoredUsers(): Record<string, UserProfile> {
   if (typeof window === "undefined") return DEMO_USERS;
   try {
-    const stored = localStorage.getItem("apkgs_users");
+    const stored = localStorage.getItem("axiom_users");
     if (stored) {
       return { ...DEMO_USERS, ...JSON.parse(stored) };
     }
@@ -43,7 +43,7 @@ function saveCustomUsers(users: Record<string, UserProfile>) {
   for (const [k, v] of Object.entries(users)) {
     if (!DEMO_USERS[k]) custom[k] = v;
   }
-  localStorage.setItem("apkgs_users", JSON.stringify(custom));
+  localStorage.setItem("axiom_users", JSON.stringify(custom));
 }
 
 export function useDemoUser() {

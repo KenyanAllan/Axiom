@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models.tables import Activity, AtomicClaim, Topic, UserMastery
+from pydantic import BaseModel, Field
+
+from app.models.tables import Activity, AtomicClaim, Classroom, Topic, TopicPrerequisite, User, UserMastery
 from app.schemas.activities import (
     ActivityCreate,
     ActivityFeedResponse,
@@ -22,11 +24,18 @@ from app.schemas.activities import (
     EvaluateResult,
     QueueResponse,
 )
+from app.services.activity_generator import generate_basic_activities
 from app.services.evaluation import evaluate_student_response
 from app.services.queue import get_user_queue, add_to_queue
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/activities", tags=["activities"])
+
+
+class GenerateRequest(BaseModel):
+    claim_id: str
+    workspace_id: int
+    types: list[str] = Field(default=["flashcard", "true_false", "multi_choice"])
 
 
 # ── POST /api/activities/evaluate ────────────────────────────────────────────
@@ -161,6 +170,16 @@ async def create_activity(
     If scope is CLASSROOM_SHARED and classroom_id is set, the activity is also
     broadcast to all students in the classroom.
     """
+    if body.scope == "CLASSROOM_SHARED":
+        if body.classroom_id is None:
+            raise HTTPException(status_code=400, detail="classroom_id required for CLASSROOM_SHARED")
+        user = await db.get(User, user_id)
+        if user is None or user.role != "teacher":
+            raise HTTPException(status_code=403, detail="Only teachers can create classroom-shared activities")
+        classroom = await db.get(Classroom, body.classroom_id)
+        if classroom is None or classroom.teacher_id != user_id:
+            raise HTTPException(status_code=403, detail="You do not own this classroom")
+
     activity = Activity(
         workspace_id=body.workspace_id,
         creator_id=user_id,
@@ -243,7 +262,7 @@ async def submit_attempt(
         raise HTTPException(status_code=400, detail=str(exc))
 
     return AttemptResult(
-        attempt_id=0,
+        attempt_id=result["attempt_id"],
         outcome=result["outcome"],
         hints_used=result["hints_used"],
         xp_awarded=result["xp_awarded"],
@@ -301,6 +320,104 @@ async def add_to_queue_endpoint(
         raise HTTPException(status_code=400, detail=str(exc))
 
     return {"status": "added", "activity_id": activity_id}
+
+
+# ── POST /api/activities/generate ────────────────────────────────────────────
+
+
+@router.post("/generate", response_model=list[ActivityResponse])
+async def generate_activities(
+    body: GenerateRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ActivityResponse]:
+    """Auto-generate deterministic activities for a claim."""
+    claim = await db.get(AtomicClaim, body.claim_id)
+    if claim is None:
+        raise HTTPException(status_code=404, detail=f"Claim '{body.claim_id}' not found")
+
+    activities = await generate_basic_activities(
+        db=db,
+        claim=claim,
+        workspace_id=body.workspace_id,
+        creator_id=user_id,
+        types=body.types,
+    )
+
+    return [ActivityResponse.model_validate(a) for a in activities]
+
+
+# ── GET /api/activities/flashcards/{topic_id} ────────────────────────────────
+
+
+@router.get("/flashcards/{topic_id}", response_model=list[ActivityResponse])
+async def flashcard_stack(
+    topic_id: str,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ActivityResponse]:
+    """Return a flashcard stack for a topic.
+
+    Gets all flashcard activities targeting claims in this topic.
+    If fewer than 5, pulls from neighboring prerequisite/dependent topics.
+    """
+    topic = await db.get(Topic, topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
+
+    # Get claim IDs in this topic
+    claim_result = await db.execute(
+        select(AtomicClaim.id).where(AtomicClaim.topic_id == topic_id)
+    )
+    claim_ids = [row[0] for row in claim_result.all()]
+
+    flashcards: list[Activity] = []
+    if claim_ids:
+        fc_result = await db.execute(
+            select(Activity).where(
+                Activity.type == "flashcard",
+                Activity.target_claim_ids.op("?|")(claim_ids),
+            )
+        )
+        flashcards = list(fc_result.scalars().all())
+
+    # If fewer than 5, expand to neighboring topics
+    if len(flashcards) < 5:
+        # Prerequisites of this topic
+        prereq_result = await db.execute(
+            select(TopicPrerequisite.prerequisite_id).where(
+                TopicPrerequisite.topic_id == topic_id
+            )
+        )
+        neighbor_ids = {row[0] for row in prereq_result.all()}
+
+        # Topics that depend on this topic
+        dep_result = await db.execute(
+            select(TopicPrerequisite.topic_id).where(
+                TopicPrerequisite.prerequisite_id == topic_id
+            )
+        )
+        neighbor_ids |= {row[0] for row in dep_result.all()}
+
+        if neighbor_ids:
+            neighbor_claim_result = await db.execute(
+                select(AtomicClaim.id).where(AtomicClaim.topic_id.in_(neighbor_ids))
+            )
+            neighbor_claim_ids = [row[0] for row in neighbor_claim_result.all()]
+
+            if neighbor_claim_ids:
+                existing_ids = {f.id for f in flashcards}
+                extra_result = await db.execute(
+                    select(Activity).where(
+                        Activity.type == "flashcard",
+                        Activity.target_claim_ids.op("?|")(neighbor_claim_ids),
+                        Activity.id.notin_(existing_ids) if existing_ids else True,
+                    )
+                )
+                extra = list(extra_result.scalars().all())
+                flashcards.extend(extra[: 5 - len(flashcards)])
+
+    return [ActivityResponse.model_validate(a) for a in flashcards]
 
 
 # ── GET /api/activities/{id} ─────────────────────────────────────────────────

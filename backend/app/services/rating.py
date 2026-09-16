@@ -127,22 +127,21 @@ async def _drop_mastered_queue_entries(
     claim_id: str,
 ) -> None:
     """Remove incomplete queue entries for activities targeting only this claim."""
-    # Find activities that target this claim
-    activities_result = await db.execute(select(Activity))
-    activities = activities_result.scalars().all()
+    from sqlalchemy import cast
+    from sqlalchemy.dialects.postgresql import JSONB as JSONB_TYPE
 
-    activity_ids_to_drop: list[int] = []
-    for activity in activities:
-        target_ids = activity.target_claim_ids or []
-        # Only drop if this claim is the sole target
-        if target_ids == [claim_id]:
-            activity_ids_to_drop.append(activity.id)
+    single_claim_array = cast([claim_id], JSONB_TYPE)
 
-    if activity_ids_to_drop:
-        await db.execute(
-            delete(UserActivityQueue).where(
-                UserActivityQueue.user_id == user_id,
-                UserActivityQueue.activity_id.in_(activity_ids_to_drop),
-                UserActivityQueue.is_completed == False,  # noqa: E712
-            )
+    matching_ids_stmt = (
+        select(Activity.id).where(
+            Activity.target_claim_ids == single_claim_array
         )
+    )
+
+    await db.execute(
+        delete(UserActivityQueue).where(
+            UserActivityQueue.user_id == user_id,
+            UserActivityQueue.activity_id.in_(matching_ids_stmt),
+            UserActivityQueue.is_completed == False,  # noqa: E712
+        )
+    )

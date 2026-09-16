@@ -112,4 +112,5 @@ export type ViewTab =
   | "chat"
   | "wiki"
   | "nodemap"
-  | "sources";
+  | "sources"
+  | "dashboard";

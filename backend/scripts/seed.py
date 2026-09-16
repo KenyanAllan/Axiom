@@ -9,38 +9,67 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 from app.core.database import Base
-from app.models.tables import AtomicClaim, Topic, TopicPrerequisite, User, UserMastery
+from app.models.tables import AtomicClaim, Topic, TopicPrerequisite, User, UserMastery, Workspace
 
 settings = get_settings()
 engine = create_engine(settings.sync_database_url, echo=True)
 
 
 def seed():
-    # Create all tables (idempotent if they already exist)
     Base.metadata.create_all(engine)
     Ses = sessionmaker(bind=engine)
 
     with Ses() as db:
         # ── Demo users ───────────────────────────────────────────────────
-        db.merge(User(id="usr_student_demo", display_name="Demo Student", role="student", xp=0, level=1, streak_days=0))
-        db.merge(User(id="usr_teacher_demo", display_name="Demo Teacher", role="teacher", xp=0, level=1, streak_days=0))
-        db.merge(User(id="usr_learner_demo", display_name="Demo Learner", role="individual_learner", xp=0, level=1, streak_days=0))
+        db.merge(User(
+            id="usr_student_demo",
+            display_name="Demo Student",
+            email="student@demo.axiom",
+            role="student",
+            xp=0, level=1, streak_days=0,
+        ))
+        db.merge(User(
+            id="usr_teacher_demo",
+            display_name="Demo Teacher",
+            email="teacher@demo.axiom",
+            role="teacher",
+            xp=0, level=1, streak_days=0,
+        ))
+        db.merge(User(
+            id="usr_learner_demo",
+            display_name="Demo Learner",
+            email="learner@demo.axiom",
+            role="individual_learner",
+            xp=0, level=1, streak_days=0,
+        ))
+
+        # ── Personal workspace for the learner ───────────────────────────
+        db.merge(Workspace(
+            id=1,
+            user_id="usr_learner_demo",
+            title="Linear Algebra",
+            description="Demo workspace for linear algebra topics",
+            is_classroom_shared=False,
+        ))
 
         # ── Topics ───────────────────────────────────────────────────────
         db.merge(Topic(
             id="top_row_reduction",
+            workspace_id=1,
             slug="row-reduction",
             title="Row Reduction & Echelon Forms",
             summary="Systematic methods for solving systems of linear equations using elementary row operations.",
         ))
         db.merge(Topic(
             id="top_gauss_elim",
+            workspace_id=1,
             slug="gaussian-elimination",
             title="Gaussian Elimination",
             summary="An algorithm for solving systems of linear equations by reducing to row echelon form.",
         ))
         db.merge(Topic(
             id="top_matrix_inverse",
+            workspace_id=1,
             slug="matrix-inverse",
             title="Matrix Inverses",
             summary="Conditions for invertibility and algorithms to compute the inverse of a square matrix.",

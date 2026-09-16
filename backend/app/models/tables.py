@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models — matches the APKGS domain rules spec."""
+"""SQLAlchemy ORM models — matches the Axiom domain rules spec."""
 
 from datetime import date, datetime, timezone
 
@@ -8,6 +8,7 @@ from sqlalchemy import (
     Column,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -28,6 +29,8 @@ class User(Base):
 
     id = Column(String, primary_key=True)
     display_name = Column(String, nullable=False)
+    email = Column(String, unique=True, nullable=True)
+    hashed_password = Column(String, nullable=True)
     role = Column(String, nullable=False)  # student | teacher | individual_learner
     xp = Column(Integer, nullable=False, default=0)
     level = Column(Integer, nullable=False, default=1)
@@ -109,6 +112,37 @@ class Workspace(Base):
     classroom = relationship("Classroom", back_populates="workspace")
     topics = relationship("Topic", back_populates="workspace", lazy="selectin")
     activities = relationship("Activity", back_populates="workspace", lazy="selectin")
+    source_documents = relationship("SourceDocument", back_populates="workspace", lazy="selectin")
+
+
+# ── Source Documents (Layer 1 Ground-Truth) ──────────────────────────────────
+
+
+class SourceDocument(Base):
+    __tablename__ = "source_documents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    uploader_id = Column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    filename = Column(String, nullable=False)
+    s3_key = Column(String, nullable=False)
+    content_type = Column(String, nullable=False, default="application/pdf")
+    size_bytes = Column(Integer, nullable=True)
+    status = Column(String, nullable=False, default="uploaded")  # uploaded | processing | ready | error
+    transcript_s3_key = Column(String, nullable=True)
+    metadata_ = Column("metadata", JSONB, nullable=False, default=dict)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    workspace = relationship("Workspace", back_populates="source_documents")
+    uploader = relationship("User")
 
 
 # ── Topics (WikiPages) ─────────────────────────────────────────────────────────
@@ -159,6 +193,9 @@ class AtomicClaim(Base):
     topic_id = Column(
         String, ForeignKey("topics.id", ondelete="CASCADE"), nullable=False
     )
+    source_document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="SET NULL"), nullable=True
+    )
     title = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     diagnostic_prompt = Column(Text)
@@ -167,6 +204,7 @@ class AtomicClaim(Base):
     embedding = Column(Vector(1024))
 
     topic = relationship("Topic", back_populates="claims")
+    source_document = relationship("SourceDocument")
     masteries = relationship("UserMastery", back_populates="claim", lazy="selectin")
 
 
@@ -271,7 +309,7 @@ class ActivityAttempt(Base):
         String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     activity_id = Column(
-        Integer, ForeignKey("activities.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("activities.id", ondelete="CASCADE"), nullable=True
     )
     claim_id = Column(
         String, ForeignKey("atomic_claims.id", ondelete="CASCADE"), nullable=True
@@ -290,3 +328,47 @@ class ActivityAttempt(Base):
     user = relationship("User")
     activity = relationship("Activity", back_populates="attempts")
     claim = relationship("AtomicClaim")
+
+
+# ── Chat Sessions ──────────────────────────────────────────────────────────────
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    workspace_id = Column(
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    title = Column(String, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    user = relationship("User")
+    workspace = relationship("Workspace")
+    messages = relationship("ChatMessage", back_populates="session", order_by="ChatMessage.created_at")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(
+        Integer, ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    role = Column(String, nullable=False)  # user | assistant
+    content = Column(Text, nullable=False)
+    sources = Column(JSONB, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    session = relationship("ChatSession", back_populates="messages")

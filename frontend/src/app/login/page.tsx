@@ -45,13 +45,13 @@ export default function LoginPage() {
         {/* Header */}
         <div className="text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">
-            AK
+            Ax
           </div>
           <h1 className="mt-4 text-2xl font-bold tracking-tight">
-            Sign in to APKGS
+            Sign in to Axiom
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Autonomous Pedagogical Knowledge Graph System
+            Technical Learning Workspace
           </p>
         </div>
 

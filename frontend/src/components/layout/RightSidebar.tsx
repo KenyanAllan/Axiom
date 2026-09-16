@@ -8,9 +8,8 @@ import { formatXP } from "@/lib/utils";
 
 interface RightSidebarProps {
   user: UserProfile;
+  onActivityClick?: (activityId: string) => void;
 }
-
-// ── Demo mastery data (will come from API in production) ─────────────────────
 
 const DOMAIN_MASTERY = [
   { domain: "Linear Algebra", percent: 78 },
@@ -18,35 +17,72 @@ const DOMAIN_MASTERY = [
   { domain: "Discrete Math", percent: 92 },
 ];
 
-const RECENT_ACTIVITY = [
+const STUDENT_ACTIVITY = [
   {
     color: "bg-blue-500",
     title: "Completed Flashcard: Row Invariance",
     xp: 15,
     time: "10m ago",
+    activityId: "diag_1",
   },
   {
     color: "bg-blue-600",
     title: "Passed Micro-Project: Partial Pivot Unit Tests",
     xp: 120,
     time: "1h ago",
+    activityId: "queued_1",
   },
   {
     color: "bg-gray-400",
     title: "Mastered [claim_ge_01]",
     xp: 50,
     time: "Yesterday",
+    activityId: "queued_2",
   },
 ];
 
-export function RightSidebar({ user }: RightSidebarProps) {
-  const xpForNextLevel = (user.level) * 200;
+const CLASS_ACTIVITY = [
+  {
+    color: "bg-blue-500",
+    title: "Alex K. completed Row Invariance Diagnostic",
+    xp: 15,
+    time: "10m ago",
+    activityId: "diag_1",
+  },
+  {
+    color: "bg-purple-500",
+    title: "Maya R. started Feynman: Elementary Row Ops",
+    xp: 50,
+    time: "25m ago",
+    activityId: "queued_2",
+  },
+  {
+    color: "bg-blue-600",
+    title: "Jordan L. completed Matrix Inversion Sandbox",
+    xp: 100,
+    time: "1h ago",
+    activityId: "queued_1",
+  },
+  {
+    color: "bg-emerald-500",
+    title: "Sam T. mastered Gaussian Elimination",
+    xp: 75,
+    time: "2h ago",
+    activityId: "diag_1",
+  },
+];
+
+export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
+  const xpForNextLevel = user.level * 200;
   const xpInCurrentLevel = user.xp - (user.level - 1) * 200;
   const progressPercent = Math.min(
     Math.round((xpInCurrentLevel / 200) * 100),
     100
   );
   const xpRemaining = xpForNextLevel - user.xp;
+
+  const isTeacher = user.role === "teacher";
+  const recentActivity = isTeacher ? CLASS_ACTIVITY : STUDENT_ACTIVITY;
 
   return (
     <aside className="flex w-[280px] shrink-0 flex-col overflow-y-auto border-l bg-background">
@@ -66,7 +102,9 @@ export function RightSidebar({ user }: RightSidebarProps) {
           <span className="ml-1 text-sm text-muted-foreground">XP</span>
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {xpRemaining > 0 ? `${xpRemaining} XP remaining to Level ${user.level + 1}` : "Max level reached"}
+          {xpRemaining > 0
+            ? `${xpRemaining} XP remaining to Level ${user.level + 1}`
+            : "Max level reached"}
         </p>
 
         <Progress
@@ -116,16 +154,20 @@ export function RightSidebar({ user }: RightSidebarProps) {
       {/* Recent activity timeline */}
       <div className="px-5 py-4">
         <p className="mb-3 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Recent Activity
+          {isTeacher ? "Class Activity" : "Recent Activity"}
         </p>
         <div className="space-y-4">
-          {RECENT_ACTIVITY.map((a, i) => (
-            <div key={i} className="flex gap-3">
+          {recentActivity.map((a, i) => (
+            <button
+              key={i}
+              onClick={() => onActivityClick?.(a.activityId)}
+              className="flex w-full gap-3 text-left transition-colors hover:opacity-80"
+            >
               <div className="flex flex-col items-center">
                 <span
                   className={`mt-1 h-2.5 w-2.5 rounded-full ${a.color}`}
                 />
-                {i < RECENT_ACTIVITY.length - 1 && (
+                {i < recentActivity.length - 1 && (
                   <span className="mt-1 w-px flex-1 bg-border" />
                 )}
               </div>
@@ -133,11 +175,11 @@ export function RightSidebar({ user }: RightSidebarProps) {
                 <p className="text-sm font-medium leading-snug">{a.title}</p>
                 <p className="mt-0.5 font-mono text-xs">
                   <span className="text-xp">+{a.xp} XP</span>
-                  <span className="mx-1 text-muted-foreground">·</span>
+                  <span className="mx-1 text-muted-foreground">&middot;</span>
                   <span className="text-muted-foreground">{a.time}</span>
                 </p>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>

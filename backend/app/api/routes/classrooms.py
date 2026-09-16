@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -14,9 +14,6 @@ from app.models.tables import (
     Classroom,
     ClassroomStudent,
     User,
-    UserMastery,
-    ActivityAttempt,
-    Activity,
 )
 from app.schemas.classrooms import (
     ClassroomCreate,
@@ -26,6 +23,7 @@ from app.schemas.classrooms import (
     JoinResponse,
     ClassroomDiagnosticResponse,
     AssignActivityRequest,
+    LeaderboardEntry,
     StudentSummary,
 )
 from app.services.classroom import (
@@ -120,28 +118,22 @@ async def list_classrooms(
             .where(ClassroomStudent.student_id == user_id)
         )
 
+    from sqlalchemy.orm import selectinload
+
+    stmt = stmt.options(selectinload(Classroom.enrollments))
     rows = (await db.execute(stmt)).scalars().all()
 
-    results: list[ClassroomResponse] = []
-    for c in rows:
-        count_stmt = (
-            select(func.count())
-            .select_from(ClassroomStudent)
-            .where(ClassroomStudent.classroom_id == c.id)
+    return [
+        ClassroomResponse(
+            id=c.id,
+            teacher_id=c.teacher_id,
+            title=c.title,
+            join_code=c.join_code,
+            created_at=c.created_at,
+            student_count=len(c.enrollments or []),
         )
-        student_count = (await db.execute(count_stmt)).scalar_one()
-        results.append(
-            ClassroomResponse(
-                id=c.id,
-                teacher_id=c.teacher_id,
-                title=c.title,
-                join_code=c.join_code,
-                created_at=c.created_at,
-                student_count=student_count,
-            )
-        )
-
-    return results
+        for c in rows
+    ]
 
 
 # ── GET /api/classrooms/{id} ──────────────────────────────────────────────────
@@ -222,3 +214,60 @@ async def broadcast_activity(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "broadcast", "activity_id": body.activity_id}
+
+
+# ── GET /api/classrooms/{id}/leaderboard ─────────────────────────────────────
+
+
+@router.get("/{classroom_id}/leaderboard", response_model=list[LeaderboardEntry])
+async def classroom_leaderboard(
+    classroom_id: int,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[LeaderboardEntry]:
+    """Get XP leaderboard for a classroom. Accessible by the teacher or any enrolled student."""
+    # Check classroom exists
+    classroom = await db.get(Classroom, classroom_id)
+    if classroom is None:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+
+    # Allow teacher OR enrolled student
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.role == "teacher":
+        if classroom.teacher_id != user_id:
+            raise HTTPException(status_code=403, detail="You do not own this classroom")
+    else:
+        # Check student is enrolled
+        enrollment = (
+            await db.execute(
+                select(ClassroomStudent).where(
+                    ClassroomStudent.classroom_id == classroom_id,
+                    ClassroomStudent.student_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if enrollment is None:
+            raise HTTPException(status_code=403, detail="You are not enrolled in this classroom")
+
+    # Query enrolled students ordered by XP
+    stmt = (
+        select(User)
+        .join(ClassroomStudent, ClassroomStudent.student_id == User.id)
+        .where(ClassroomStudent.classroom_id == classroom_id)
+        .order_by(User.xp.desc())
+    )
+    students = (await db.execute(stmt)).scalars().all()
+
+    return [
+        LeaderboardEntry(
+            rank=idx + 1,
+            student_id=s.id,
+            display_name=s.display_name,
+            xp=s.xp or 0,
+            level=s.level or 1,
+        )
+        for idx, s in enumerate(students)
+    ]

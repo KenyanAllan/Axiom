@@ -18,7 +18,7 @@ settings = get_settings()
 # ── Celery app ──────────────────────────────────────────────────────────────────
 
 celery_app = Celery(
-    "apkgs",
+    "axiom",
     broker=settings.redis_url,
     backend=settings.redis_url,
 )
@@ -30,6 +30,7 @@ celery_app.conf.update(
     enable_utc=True,
     task_routes={
         "app.workers.celery_app.ingest_markdown_chunk": {"queue": "ingestion"},
+        "app.workers.celery_app.ingest_source_document_task": {"queue": "ingestion"},
     },
 )
 
@@ -131,3 +132,28 @@ def ingest_markdown_chunk(
 
     logger.info("Ingested %d claims for topic %s", inserted, topic_id)
     return {"topic_id": topic_id, "claims_inserted": inserted}
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=60)
+def ingest_source_document_task(
+    self,
+    source_doc_id: int,
+    workspace_id: int,
+    s3_key: str,
+    filename: str,
+    content_type: str,
+) -> dict:
+    """Celery wrapper for the full source document ingestion pipeline."""
+    from app.services.ingestion import ingest_source_document
+
+    try:
+        return ingest_source_document(
+            source_doc_id=source_doc_id,
+            workspace_id=workspace_id,
+            s3_key=s3_key,
+            filename=filename,
+            content_type=content_type,
+        )
+    except Exception as exc:
+        logger.error("Source document ingestion failed for doc %s: %s", source_doc_id, exc)
+        raise self.retry(exc=exc)

@@ -5,8 +5,6 @@ import {
   Code2,
   FlaskConical,
   GitBranch,
-  FileCode,
-  Gauge,
   LogOut,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -31,10 +29,6 @@ const WORKBENCH_ITEMS: NavItem[] = [
   { label: "Algorithms Vault", icon: <Code2 className="h-4 w-4" /> },
 ];
 
-const SPECS_ITEMS: NavItem[] = [
-  { label: "API & Specs", icon: <FileCode className="h-4 w-4" /> },
-  { label: "Performance Benchmarks", icon: <Gauge className="h-4 w-4" /> },
-];
 
 export function LeftSidebar({ user, onLogout }: LeftSidebarProps) {
   const initials = user.display_name
@@ -75,7 +69,7 @@ export function LeftSidebar({ user, onLogout }: LeftSidebarProps) {
       {/* Workbench nav */}
       <div className="flex-1 overflow-y-auto px-3 py-3">
         <p className="mb-2 px-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          APKGS Workbench
+          Axiom Workbench
         </p>
         <nav className="mb-6 space-y-0.5">
           {WORKBENCH_ITEMS.map((item) => (
@@ -93,20 +87,6 @@ export function LeftSidebar({ user, onLogout }: LeftSidebarProps) {
           ))}
         </nav>
 
-        <p className="mb-2 px-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Technical Specs
-        </p>
-        <nav className="space-y-0.5">
-          {SPECS_ITEMS.map((item) => (
-            <button
-              key={item.label}
-              className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </nav>
       </div>
 
       <Separator />
@@ -121,7 +101,7 @@ export function LeftSidebar({ user, onLogout }: LeftSidebarProps) {
           </span>
         </div>
         <p className="font-mono text-[10px] text-muted-foreground/60">
-          env: apkgs-workspace
+          env: axiom-workspace
         </p>
       </div>
 

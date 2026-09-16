@@ -54,7 +54,7 @@ class ClassroomDetail(ClassroomResponse):
 class JoinResponse(BaseModel):
     classroom_id: int
     classroom_title: str
-    workspace_id: int
+    workspace_id: int | None = None
 
 
 class ClassroomDiagnosticResponse(BaseModel):
@@ -65,3 +65,11 @@ class ClassroomDiagnosticResponse(BaseModel):
         default_factory=dict,
         description="Maps student_id -> claim_id -> understanding_rating.",
     )
+
+
+class LeaderboardEntry(BaseModel):
+    rank: int
+    student_id: str
+    display_name: str
+    xp: int
+    level: int

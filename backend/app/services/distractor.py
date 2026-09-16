@@ -91,16 +91,18 @@ async def sample_distractors(
     )
     recent_attempts = recent_attempts_result.scalars().all()
 
-    # Collect claim IDs used as distractors in those attempts
-    # Distractors are stored in the activity payload
     from app.models.tables import Activity
 
     recent_distractor_ids: set[str] = set()
-    for attempt in recent_attempts:
-        activity = await db.get(Activity, attempt.activity_id)
-        if activity and activity.payload:
-            distractor_ids = activity.payload.get("distractor_claim_ids", [])
-            recent_distractor_ids.update(distractor_ids)
+    attempt_activity_ids = [a.activity_id for a in recent_attempts if a.activity_id]
+    if attempt_activity_ids:
+        activities_result = await db.execute(
+            select(Activity).where(Activity.id.in_(attempt_activity_ids))
+        )
+        for activity in activities_result.scalars().all():
+            if activity.payload:
+                distractor_ids = activity.payload.get("distractor_claim_ids", [])
+                recent_distractor_ids.update(distractor_ids)
 
     # Filter out recently used distractors
     filtered_candidates = [

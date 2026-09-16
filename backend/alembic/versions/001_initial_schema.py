@@ -1,4 +1,4 @@
-"""Initial schema — all tables for APKGS domain rules spec.
+"""Initial schema — all tables for Axiom domain rules spec.
 
 Revision ID: 001
 Revises:
@@ -276,7 +276,7 @@ def upgrade() -> None:
             "activity_id",
             sa.Integer(),
             sa.ForeignKey("activities.id", ondelete="CASCADE"),
-            nullable=False,
+            nullable=True,
         ),
         sa.Column(
             "claim_id",

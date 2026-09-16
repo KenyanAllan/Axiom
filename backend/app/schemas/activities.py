@@ -54,7 +54,6 @@ class ActivityCreate(BaseModel):
 class AttemptCreate(BaseModel):
     activity_id: int
     claim_id: str | None = None
-    outcome: Outcome
     hints_used: bool = False
     student_response: str = Field(
         ...,
@@ -192,6 +191,7 @@ class UserProfile(BaseModel):
     level: int
     streak_days: int = 0
     last_active_date: date | None = None
+    email: str | None = None
 
 
 class MasteryEntry(BaseModel):

@@ -52,7 +52,7 @@ async def list_workspaces(
 ) -> WorkspaceListResponse:
     """List all workspaces belonging to the current user."""
     result = await get_user_workspaces(db=db, user_id=user_id)
-    return result
+    return WorkspaceListResponse(workspaces=result)
 
 
 # ── GET /api/workspaces/{id} ──────────────────────────────────────────────────

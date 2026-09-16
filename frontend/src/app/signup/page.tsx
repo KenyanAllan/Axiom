@@ -55,10 +55,10 @@ export default function SignupPage() {
         {/* Header */}
         <div className="text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">
-            AK
+            Ax
           </div>
           <h1 className="mt-4 text-2xl font-bold tracking-tight">
-            Create your APKGS account
+            Create your Axiom account
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Start your learning journey

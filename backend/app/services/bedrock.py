@@ -32,7 +32,7 @@ def _get_client() -> Any:
 # ─── Grading via Converse API ───────────────────────────────────────────────────
 
 GRADING_SYSTEM_PROMPT = """\
-You are a precise technical grading assistant for the APKGS learning platform.
+You are a precise technical grading assistant for the Axiom learning platform.
 
 You will receive:
 1. A CLAIM — the factual assertion the student should understand.
@@ -40,12 +40,15 @@ You will receive:
 3. A STUDENT RESPONSE — the student's written answer or diagnosis.
 
 Your task:
-- Determine whether the student's response meets the rubric criteria.
+- Evaluate the student's response against the rubric and assign one of three outcomes:
+  - "understood": the response meets the rubric criteria and demonstrates understanding.
+  - "did_not_understand": the response contains errors or misses the rubric criteria.
+  - "neutral": the response is ambiguous, partially correct, or shows awareness but not mastery.
 - Return a JSON object with exactly two keys:
-  - "is_correct": true or false
-  - "feedback": a 2-4 sentence formative explanation. If correct, reinforce
-    why the reasoning is sound. If incorrect, identify the specific gap
-    without giving away the full answer.
+  - "outcome": one of "understood", "did_not_understand", or "neutral"
+  - "feedback": a 2-4 sentence formative explanation. If understood, reinforce
+    why the reasoning is sound. If did_not_understand, identify the specific gap
+    without giving away the full answer. If neutral, acknowledge partial progress.
 
 Return ONLY the JSON object. No markdown fences, no preamble.
 """
@@ -103,13 +106,18 @@ def grade_response(
         else:
             logger.error("Failed to parse grading JSON: %s", raw_text)
             result = {
-                "is_correct": False,
+                "outcome": "neutral",
                 "feedback": "The system could not parse the evaluation. Please try again.",
             }
 
-    # Ensure required keys exist
+    # Normalize: support both new 3-outcome and legacy is_correct formats
+    outcome = result.get("outcome")
+    if outcome not in ("understood", "did_not_understand", "neutral"):
+        is_correct = result.get("is_correct", False)
+        outcome = "understood" if is_correct else "did_not_understand"
+
     return {
-        "is_correct": bool(result.get("is_correct", False)),
+        "outcome": outcome,
         "feedback": str(result.get("feedback", "No feedback generated.")),
     }
 

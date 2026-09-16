@@ -172,25 +172,24 @@ async def get_classroom_detail(
 
     students = [
         {
-            "user_id": e.student_id,
-            "display_name": e.student.display_name if e.student else None,
-            "joined_at": e.joined_at.isoformat() if e.joined_at else None,
+            "id": e.student_id,
+            "display_name": e.student.display_name if e.student else "Unknown",
+            "xp": e.student.xp if e.student else 0,
+            "level": e.student.level if e.student else 1,
+            "joined_at": e.joined_at,
         }
         for e in (classroom.enrollments or [])
     ]
 
     return {
-        "classroom_id": classroom.id,
+        "id": classroom.id,
+        "teacher_id": classroom.teacher_id,
         "title": classroom.title,
         "join_code": classroom.join_code,
-        "created_at": classroom.created_at.isoformat() if classroom.created_at else None,
-        "workspace": {
-            "id": classroom.workspace.id,
-            "title": classroom.workspace.title,
-        }
-        if classroom.workspace
-        else None,
+        "created_at": classroom.created_at,
+        "student_count": len(students),
         "students": students,
+        "shared_workspace_id": classroom.workspace.id if classroom.workspace else None,
     }
 
 
@@ -377,29 +376,25 @@ async def broadcast_activity_to_class(
     activity_id: int,
 ) -> None:
     """Add activity to all enrolled students' queues (spec 2.4)."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
     enrollments_result = await db.execute(
-        select(ClassroomStudent).where(
+        select(ClassroomStudent.student_id).where(
             ClassroomStudent.classroom_id == classroom_id,
         )
     )
-    enrollments = enrollments_result.scalars().all()
+    student_ids = [row[0] for row in enrollments_result.all()]
 
-    for enrollment in enrollments:
-        # Idempotent — skip if already in queue
-        existing = (
-            await db.execute(
-                select(UserActivityQueue).where(
-                    UserActivityQueue.user_id == enrollment.student_id,
-                    UserActivityQueue.activity_id == activity_id,
-                )
-            )
-        ).scalar_one_or_none()
+    if not student_ids:
+        return
 
-        if existing is None:
-            entry = UserActivityQueue(
-                user_id=enrollment.student_id,
-                activity_id=activity_id,
-            )
-            db.add(entry)
+    values = [
+        {"user_id": sid, "activity_id": activity_id}
+        for sid in student_ids
+    ]
 
+    stmt = pg_insert(UserActivityQueue).values(values).on_conflict_do_nothing(
+        constraint="uq_user_activity"
+    )
+    await db.execute(stmt)
     await db.flush()
