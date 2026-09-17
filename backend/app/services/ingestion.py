@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any
 
 import boto3
@@ -47,6 +48,60 @@ def parse_pdf_to_text(pdf_bytes: bytes) -> str:
 
     doc.close()
     return "\n\n".join(pages)
+
+
+AUDIO_CONTENT_TYPES = {
+    "audio/mpeg", "audio/mp3", "audio/mp4", "audio/wav", "audio/x-wav",
+    "audio/ogg", "audio/flac", "audio/webm", "video/mp4", "video/webm",
+}
+
+AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".ogg", ".flac", ".webm", ".m4a"}
+
+
+def is_audio_file(content_type: str, filename: str) -> bool:
+    """Check if the file is an audio/video type that needs transcription."""
+    if content_type in AUDIO_CONTENT_TYPES:
+        return True
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext in AUDIO_EXTENSIONS
+
+
+def transcribe_audio_file(s3_key: str, source_doc_id: int) -> str:
+    """Transcribe an audio file using Amazon Transcribe. Blocks until complete.
+
+    Polls every 15 seconds, up to 10 minutes max.
+    """
+    from app.services.transcribe import (
+        get_transcript_text,
+        get_transcription_status,
+        start_transcription,
+    )
+
+    job_name = start_transcription(s3_key, source_doc_id)
+    logger.info("Started transcription job %s for source_doc %s", job_name, source_doc_id)
+
+    max_wait = 600  # 10 minutes
+    poll_interval = 15
+    elapsed = 0
+
+    while elapsed < max_wait:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+
+        status = get_transcription_status(job_name)
+        logger.info("Transcription %s status: %s (%ds elapsed)", job_name, status["status"], elapsed)
+
+        if status["status"] == "COMPLETED":
+            text = get_transcript_text(job_name)
+            if text:
+                logger.info("Transcription complete for %s: %d chars", job_name, len(text))
+                return text
+            return ""
+
+        if status["status"] == "FAILED":
+            raise RuntimeError(f"Transcription job {job_name} failed")
+
+    raise TimeoutError(f"Transcription job {job_name} timed out after {max_wait}s")
 
 
 def parse_source_file(file_bytes: bytes, content_type: str, filename: str) -> str:
@@ -291,7 +346,7 @@ def ingest_source_document(
                 db.commit()
         return stats
 
-    # ── 2. Parse ─────────────────────────────────────────────────────────────
+    # ── 2. Parse (PDF/text) or Transcribe (audio/video) ────────────────────
     logger.info("Parsing %s (%s, %d bytes)", filename, content_type, len(file_bytes))
     with Session() as db:
         doc = db.get(SourceDocument, source_doc_id)
@@ -300,9 +355,19 @@ def ingest_source_document(
             db.commit()
 
     try:
-        full_text = parse_source_file(file_bytes, content_type, filename)
+        if is_audio_file(content_type, filename):
+            logger.info("Audio file detected — routing through Transcribe")
+            full_text = transcribe_audio_file(s3_key, source_doc_id)
+            # Store transcript reference on the source document
+            with Session() as db:
+                doc = db.get(SourceDocument, source_doc_id)
+                if doc:
+                    doc.transcript_s3_key = f"transcripts/{source_doc_id}.txt"
+                    db.commit()
+        else:
+            full_text = parse_source_file(file_bytes, content_type, filename)
     except Exception as exc:
-        logger.error("Parse failed for %s: %s", filename, exc)
+        logger.error("Parse/transcribe failed for %s: %s", filename, exc)
         with Session() as db:
             doc = db.get(SourceDocument, source_doc_id)
             if doc:

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { TopBar } from "@/components/layout/TopBar";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { NavPanel } from "@/components/layout/NavPanel";
 import { CenterStage } from "@/components/layout/CenterStage";
@@ -12,6 +11,8 @@ import {
   INITIAL_ACTIVITIES,
 } from "@/components/activity/ActivityFeed";
 import type { Activity } from "@/components/activity/ActivityFeed";
+import type { WikiPage } from "@/components/layout/CenterStage";
+import { INITIAL_WIKI_PAGES } from "@/components/layout/CenterStage";
 import { useDemoUser } from "@/hooks/use-demo-user";
 import type { ViewTab } from "@/lib/types";
 
@@ -25,6 +26,9 @@ export default function Home() {
   );
   const [activities, setActivities] =
     useState<Activity[]>(INITIAL_ACTIVITIES);
+  const [wikiPages, setWikiPages] = useState<WikiPage[]>(INITIAL_WIKI_PAGES);
+  const [wikiPageId, setWikiPageId] = useState<string | null>(null);
+  const [pendingChatMessage, setPendingChatMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -49,6 +53,16 @@ export default function Home() {
     setExpandedActivityId(null);
   }, []);
 
+  const handleDiscussWithTutor = useCallback((context: string) => {
+    setExpandedActivityId(null);
+    setPendingChatMessage(context);
+  }, []);
+
+  const handleWikiSelect = useCallback((id: string) => {
+    setWikiPageId(id);
+    setActiveTab("wiki");
+  }, []);
+
   if (!mounted || !isLoggedIn || !user) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -63,15 +77,14 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
-      <TopBar />
-
-      <div className="flex min-h-0 flex-1">
+    <div className="flex h-screen overflow-hidden bg-background">
         <LeftSidebar user={user} onLogout={handleLogout} />
         <NavPanel
           activeTab={activeTab}
           onTabChange={setActiveTab}
           userRole={user.role}
+          wikiPages={wikiPages}
+          onWikiSelect={handleWikiSelect}
         />
         <CenterStage
           activeTab={activeTab}
@@ -80,12 +93,17 @@ export default function Home() {
           activities={activities}
           onActivitiesChange={setActivities}
           onExpandActivity={handleExpandActivity}
+          wikiPages={wikiPages}
+          onWikiPagesChange={setWikiPages}
+          wikiPageId={wikiPageId}
+          onWikiPageSelect={setWikiPageId}
+          pendingChatMessage={pendingChatMessage}
+          onPendingChatMessageHandled={() => setPendingChatMessage(null)}
         />
         <RightSidebar
           user={user}
           onActivityClick={handleExpandActivity}
         />
-      </div>
 
       {/* Fullscreen activity overlay */}
       {expandedActivityId && (
@@ -93,6 +111,7 @@ export default function Home() {
           activityId={expandedActivityId}
           activities={activities}
           onClose={handleCloseActivity}
+          onDiscussWithTutor={handleDiscussWithTutor}
         />
       )}
     </div>

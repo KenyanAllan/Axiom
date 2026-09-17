@@ -2,13 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  LayoutList,
   MessageSquare,
   BookText,
-  GitBranch,
-  FileText,
-  BarChart3,
-  RefreshCw,
   Sparkles,
   ArrowUp,
   Bot,
@@ -19,6 +14,7 @@ import {
   MicOff,
   Copy,
   Volume2,
+  VolumeX,
   Check,
   X,
   Anchor,
@@ -43,6 +39,12 @@ interface CenterStageProps {
   activities: Activity[];
   onActivitiesChange: (activities: Activity[]) => void;
   onExpandActivity: (id: string) => void;
+  wikiPages: WikiPage[];
+  onWikiPagesChange: (pages: WikiPage[]) => void;
+  wikiPageId: string | null;
+  onWikiPageSelect: (id: string | null) => void;
+  pendingChatMessage?: string | null;
+  onPendingChatMessageHandled?: () => void;
 }
 
 interface ChatContextItem {
@@ -61,14 +63,14 @@ interface ChatMessage {
 
 // ── Wiki data ─────────────────────────────────────────────────────────────────
 
-interface WikiClaim {
+export interface WikiClaim {
   id: string;
   title: string;
   description: string;
   anchors: string[];
 }
 
-interface WikiPage {
+export interface WikiPage {
   id: string;
   title: string;
   aliases: string[];
@@ -79,7 +81,7 @@ interface WikiPage {
 
 let _wikiCounter = 200;
 
-const INITIAL_WIKI_PAGES: WikiPage[] = [
+export const INITIAL_WIKI_PAGES: WikiPage[] = [
   {
     id: "ge",
     title: "Gaussian Elimination",
@@ -357,14 +359,18 @@ export function CenterStage({
   activities,
   onActivitiesChange,
   onExpandActivity,
+  wikiPages,
+  onWikiPagesChange,
+  wikiPageId,
+  onWikiPageSelect,
+  pendingChatMessage,
+  onPendingChatMessageHandled,
 }: CenterStageProps) {
   const isTeacher = userRole === "teacher";
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
   const [input, setInput] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [chatContext, setChatContext] = useState<ChatContextItem[]>([]);
-  const [wikiPages, setWikiPages] = useState<WikiPage[]>(INITIAL_WIKI_PAGES);
-  const [wikiPageId, setWikiPageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recRef = useRef<any>(null);
 
@@ -392,11 +398,11 @@ export function CenterStage({
     (nodeId: string) => {
       const page = wikiPages.find((p) => p.id === nodeId);
       if (page) {
-        setWikiPageId(page.id);
+        onWikiPageSelect(page.id);
         onTabChange("wiki");
       }
     },
-    [onTabChange, wikiPages]
+    [onTabChange, wikiPages, onWikiPageSelect]
   );
 
   const sendMessage = useCallback(
@@ -433,6 +439,13 @@ export function CenterStage({
     },
     [activeTab, onTabChange, chatContext]
   );
+
+  useEffect(() => {
+    if (pendingChatMessage) {
+      sendMessage(pendingChatMessage);
+      onPendingChatMessageHandled?.();
+    }
+  }, [pendingChatMessage, sendMessage, onPendingChatMessageHandled]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -479,39 +492,15 @@ export function CenterStage({
         onValueChange={(v) => onTabChange(v as ViewTab)}
         className="flex flex-1 flex-col"
       >
-        <div className="flex items-center border-b">
-          <TabsList className="flex-1">
-            <TabsTrigger value="activity" className="gap-1.5">
-              <LayoutList className="h-3.5 w-3.5" />
-              Activity Feed
-            </TabsTrigger>
-            <TabsTrigger value="chat" className="gap-1.5">
-              <MessageSquare className="h-3.5 w-3.5" />
-              Chat
-            </TabsTrigger>
-            <TabsTrigger value="wiki" className="gap-1.5">
-              <BookText className="h-3.5 w-3.5" />
-              Wiki
-            </TabsTrigger>
-            <TabsTrigger value="nodemap" className="gap-1.5">
-              <GitBranch className="h-3.5 w-3.5" />
-              Node Map
-            </TabsTrigger>
-            <TabsTrigger value="sources" className="gap-1.5">
-              <FileText className="h-3.5 w-3.5" />
-              Source Docs
-            </TabsTrigger>
-            {isTeacher && (
-              <TabsTrigger value="dashboard" className="gap-1.5">
-                <BarChart3 className="h-3.5 w-3.5" />
-                Dashboard
-              </TabsTrigger>
-            )}
-          </TabsList>
-          <button className="px-3 text-muted-foreground transition-colors hover:text-foreground">
-            <RefreshCw className="h-4 w-4" />
-          </button>
-        </div>
+        {/* Tab triggers hidden — navigation handled by NavPanel */}
+        <TabsList className="hidden">
+          <TabsTrigger value="activity" />
+          <TabsTrigger value="chat" />
+          <TabsTrigger value="wiki" />
+          <TabsTrigger value="nodemap" />
+          <TabsTrigger value="sources" />
+          <TabsTrigger value="dashboard" />
+        </TabsList>
 
         {/* ── Tab content ──────────────────────────────────────────────── */}
 
@@ -520,6 +509,7 @@ export function CenterStage({
               activities={activities}
               onActivitiesChange={onActivitiesChange}
               onExpandActivity={onExpandActivity}
+              wikiPages={wikiPages}
             />
         </TabsContent>
 
@@ -547,9 +537,9 @@ export function CenterStage({
         <TabsContent value="wiki" className="flex-1 overflow-y-auto">
           <DemoWikiTab
             pages={wikiPages}
-            onPagesChange={setWikiPages}
+            onPagesChange={onWikiPagesChange}
             selectedPageId={wikiPageId}
-            onSelectPage={setWikiPageId}
+            onSelectPage={onWikiPageSelect}
             onClaimClick={addClaimContext}
             isTeacher={isTeacher}
           />
@@ -560,7 +550,7 @@ export function CenterStage({
         </TabsContent>
 
         <TabsContent value="sources" className="flex-1 overflow-y-auto">
-          <SourceDocsManager />
+          <SourceDocsManager userRole={userRole} />
         </TabsContent>
 
         {isTeacher && (
@@ -772,6 +762,26 @@ function DemoWikiTab({
 }: DemoWikiTabProps) {
   const [mode, setMode] = useState<WikiMode>("view");
   const [editClaimId, setEditClaimId] = useState<string | null>(null);
+  const [isReading, setIsReading] = useState(false);
+
+  const handleReadAloud = () => {
+    if (isReading) {
+      window.speechSynthesis.cancel();
+      setIsReading(false);
+      return;
+    }
+    if (!page || !("speechSynthesis" in window)) return;
+    const claimsText = page.claims
+      .map((c, i) => `Claim ${i + 1}: ${c.title}. ${c.description}`)
+      .join(". ");
+    const fullText = `${page.title}. ${page.snippet}. ${claimsText}`;
+    const utter = new SpeechSynthesisUtterance(fullText);
+    utter.rate = 0.95;
+    utter.onend = () => setIsReading(false);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+    setIsReading(true);
+  };
 
   // Form fields
   const [fTitle, setFTitle] = useState("");
@@ -1051,7 +1061,24 @@ function DemoWikiTab({
 
         {mode !== "edit-page" && (
           <>
-            <h2 className="text-xl font-bold">{page.title}</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-bold">{page.title}</h2>
+              <button
+                onClick={handleReadAloud}
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+                  isReading
+                    ? "animate-pulse bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+                title={isReading ? "Stop reading" : "Listen to this page"}
+              >
+                {isReading ? (
+                  <VolumeX className="h-4 w-4" />
+                ) : (
+                  <Volume2 className="h-4 w-4" />
+                )}
+              </button>
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
               {page.aliases.map((alias) => (
                 <span

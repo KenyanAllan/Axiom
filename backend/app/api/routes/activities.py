@@ -263,6 +263,7 @@ async def submit_attempt(
 
     return AttemptResult(
         attempt_id=result["attempt_id"],
+        claim_id=result["claim_id"],
         outcome=result["outcome"],
         hints_used=result["hints_used"],
         xp_awarded=result["xp_awarded"],

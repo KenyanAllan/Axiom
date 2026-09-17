@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models.tables import SourceDocument, Workspace
+from app.models.tables import SourceDocument, User, Workspace
 from app.services.s3 import generate_upload_url, generate_download_url, delete_object
 
 logger = logging.getLogger(__name__)
@@ -168,7 +168,17 @@ async def delete_source(
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a source document, its S3 object, and nullify linked claims."""
+    """Delete a source document, its S3 object, and nullify linked claims.
+
+    Only teachers and individual learners can delete source documents.
+    Students cannot.
+    """
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.role == "student":
+        raise HTTPException(status_code=403, detail="Students cannot delete source documents")
+
     result = await db.execute(
         select(SourceDocument).where(SourceDocument.id == source_id)
     )

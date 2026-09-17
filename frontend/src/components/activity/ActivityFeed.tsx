@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import {
   AlertTriangle,
   Boxes,
@@ -19,7 +19,13 @@ import {
   RotateCcw,
   Eye,
   EyeOff,
+  Mic,
+  MicOff,
+  Bot,
+  MessageSquare,
 } from "lucide-react";
+import { evaluateResponse } from "@/lib/api";
+import type { WikiPage } from "@/components/layout/CenterStage";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -228,20 +234,73 @@ interface ActivityFeedProps {
   activities: Activity[];
   onActivitiesChange: (activities: Activity[]) => void;
   onExpandActivity: (id: string) => void;
+  wikiPages: WikiPage[];
 }
 
 export function ActivityFeed({
   activities,
   onActivitiesChange,
   onExpandActivity,
+  wikiPages,
 }: ActivityFeedProps) {
   const [showForm, setShowForm] = useState(false);
   const [fTitle, setFTitle] = useState("");
   const [fTopic, setFTopic] = useState("");
   const [fType, setFType] = useState<ActivityType>("flashcard");
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
-  const inputCls =
+  const formInputCls =
     "w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring";
+
+  // Build suggestion list: "All", wiki page titles, all claim titles
+  const allClaimTitles = wikiPages.flatMap((p) =>
+    p.claims.map((c) => c.title)
+  );
+  const suggestions: { label: string; value: string; type: "all" | "page" | "claim" }[] = [
+    { label: "All (every page & claim)", value: "__ALL__", type: "all" },
+    ...wikiPages.map((p) => ({ label: p.title, value: p.title, type: "page" as const })),
+    ...wikiPages.flatMap((p) =>
+      p.claims.map((c) => ({
+        label: c.title,
+        value: c.title,
+        type: "claim" as const,
+      }))
+    ),
+  ];
+
+  const filteredSuggestions = fTopic.trim()
+    ? suggestions.filter(
+        (s) =>
+          s.type === "all" ||
+          s.label.toLowerCase().includes(fTopic.toLowerCase())
+      )
+    : suggestions;
+
+  const handleSelectTopic = (s: (typeof suggestions)[0]) => {
+    if (s.type === "all") {
+      const allTitles = [
+        ...wikiPages.map((p) => p.title),
+        ...allClaimTitles,
+      ];
+      setFTopic(allTitles.join(", "));
+    } else if (s.type === "page") {
+      const page = wikiPages.find((p) => p.title === s.value);
+      if (page) {
+        const parts = [page.title, ...page.claims.map((c) => c.title)];
+        setFTopic(parts.join(", "));
+      }
+    } else {
+      setFTopic((prev) => {
+        const existing = prev
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+        if (existing.includes(s.value)) return prev;
+        return [...existing, s.value].join(", ");
+      });
+    }
+    setShowSuggestions(false);
+  };
 
   const handleCreate = () => {
     if (!fTitle.trim() || !fTopic.trim()) return;
@@ -291,22 +350,73 @@ export function ActivityFeed({
       </div>
 
       {showForm && (
-        <div className="rounded-lg border bg-card px-5 py-4">
-          <p className="mb-3 text-sm font-semibold">Create Activity</p>
-          <div className="space-y-3">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={() => setShowForm(false)}
+        >
+          <div
+            className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border bg-background p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowForm(false)}
+              className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full border bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <p className="mb-4 text-lg font-bold">Create Activity</p>
+            <div className="space-y-4">
             <input
-              className={inputCls}
+              className={formInputCls}
               placeholder="Activity title"
               value={fTitle}
               onChange={(e) => setFTitle(e.target.value)}
               autoFocus
             />
-            <input
-              className={inputCls}
-              placeholder="Topic (e.g. Row Reduction & Echelon Forms)"
-              value={fTopic}
-              onChange={(e) => setFTopic(e.target.value)}
-            />
+            <div className="relative">
+              <input
+                className={formInputCls}
+                placeholder="Topic — type to search wiki pages & claims"
+                value={fTopic}
+                onChange={(e) => {
+                  setFTopic(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              />
+              {showSuggestions && filteredSuggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-52 overflow-y-auto rounded-md border bg-background shadow-lg">
+                  {filteredSuggestions.map((s, i) => (
+                    <button
+                      key={`${s.type}-${i}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleSelectTopic(s);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent/50"
+                    >
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] ${
+                          s.type === "all"
+                            ? "bg-primary/10 text-primary"
+                            : s.type === "page"
+                              ? "bg-sky-50 text-sky-600"
+                              : "bg-amber-50 text-amber-600"
+                        }`}
+                      >
+                        {s.type === "all"
+                          ? "ALL"
+                          : s.type === "page"
+                            ? "Page"
+                            : "Claim"}
+                      </span>
+                      <span className="truncate">{s.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {ALL_TYPES.map((t) => {
                 const c = TYPE_CONFIG[t];
@@ -342,6 +452,7 @@ export function ActivityFeed({
                 Create
               </button>
             </div>
+          </div>
           </div>
         </div>
       )}
@@ -402,22 +513,132 @@ interface FeedbackState {
   feedback: string;
 }
 
-function FeedbackBanner({ feedback }: { feedback: FeedbackState }) {
+async function callEvaluate(
+  activityId: string,
+  studentResponse: string
+): Promise<FeedbackState | null> {
+  try {
+    const data = await evaluateResponse("usr_student_demo", {
+      claim_id: activityId,
+      student_response: studentResponse,
+    });
+    return {
+      is_correct: data.outcome === "understood",
+      feedback: data.feedback,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function FeedbackBanner({
+  feedback,
+  activityTitle,
+  onDiscussWithTutor,
+}: {
+  feedback: FeedbackState;
+  activityTitle?: string;
+  onDiscussWithTutor?: (context: string) => void;
+}) {
   return (
-    <div
-      className={`rounded-md border p-4 ${
-        feedback.is_correct
-          ? "border-emerald-200 bg-emerald-50"
-          : "border-red-200 bg-red-50"
-      }`}
-    >
-      <p className="text-sm font-semibold">
-        {feedback.is_correct ? "Correct!" : "Not quite."}
-      </p>
-      <p className="mt-1 text-sm leading-relaxed text-foreground/80">
-        {feedback.feedback}
-      </p>
+    <div className="space-y-3">
+      <div className="flex gap-3">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
+          <Bot className="h-4 w-4 text-primary" />
+        </div>
+        <div className="min-w-0 flex-1 rounded-lg border bg-card px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-primary">Axiom AI</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                feedback.is_correct
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-amber-50 text-amber-700"
+              }`}
+            >
+              {feedback.is_correct ? "Correct" : "Review needed"}
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-relaxed text-foreground/80">
+            {feedback.feedback}
+          </p>
+          {onDiscussWithTutor && (
+            <button
+              onClick={() => {
+                const context = feedback.is_correct
+                  ? `I just completed the activity "${activityTitle ?? "an activity"}" correctly. Can you help me deepen my understanding? Here's the feedback I received:\n\n"${feedback.feedback}"`
+                  : `I just attempted the activity "${activityTitle ?? "an activity"}" and got it wrong. Here's the feedback I received:\n\n"${feedback.feedback}"\n\nCan you help me understand what I got wrong and explain the correct answer?`;
+                onDiscussWithTutor(context);
+              }}
+              className="mt-3 flex items-center gap-2 rounded-md border border-primary/30 bg-background px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/5"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              Discuss in Chat
+            </button>
+          )}
+        </div>
+      </div>
     </div>
+  );
+}
+
+function VoiceMicButton({
+  onTranscript,
+  disabled,
+}: {
+  onTranscript: (text: string) => void;
+  disabled?: boolean;
+}) {
+  const [listening, setListening] = useState(false);
+  const recRef = useRef<any>(null);
+
+  const toggle = useCallback(() => {
+    if (listening) {
+      recRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    try {
+      const SR =
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition;
+      if (!SR) return;
+      const rec = new SR();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = "en-US";
+      rec.onresult = (e: any) => {
+        onTranscript(e.results[0][0].transcript);
+        setListening(false);
+      };
+      rec.onerror = () => setListening(false);
+      rec.onend = () => setListening(false);
+      recRef.current = rec;
+      rec.start();
+      setListening(true);
+    } catch {
+      // browser does not support speech recognition
+    }
+  }, [listening, onTranscript]);
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={disabled}
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+        listening
+          ? "animate-pulse bg-red-500 text-white"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+      }`}
+      title={listening ? "Stop listening" : "Voice input"}
+      type="button"
+    >
+      {listening ? (
+        <MicOff className="h-3.5 w-3.5" />
+      ) : (
+        <Mic className="h-3.5 w-3.5" />
+      )}
+    </button>
   );
 }
 
@@ -436,6 +657,13 @@ function SubmitRow({
   placeholder: string;
   multiline?: boolean;
 }) {
+  const handleTranscript = useCallback(
+    (text: string) => {
+      onChange(value + (value ? " " : "") + text);
+    },
+    [value, onChange]
+  );
+
   if (multiline) {
     return (
       <div className="space-y-2">
@@ -447,7 +675,8 @@ function SubmitRow({
           rows={4}
           disabled={isLoading}
         />
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <VoiceMicButton onTranscript={handleTranscript} disabled={isLoading} />
           <button
             onClick={onSubmit}
             disabled={!value.trim() || isLoading}
@@ -477,6 +706,7 @@ function SubmitRow({
         className={inputCls}
         disabled={isLoading}
       />
+      <VoiceMicButton onTranscript={handleTranscript} disabled={isLoading} />
       <button
         onClick={onSubmit}
         disabled={!value.trim() || isLoading}
@@ -535,7 +765,7 @@ function FlashcardActivity({ activity }: { activity: Activity }) {
   );
 }
 
-function MultiChoiceActivity({ activity }: { activity: Activity }) {
+function MultiChoiceActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const p = activity.payload ?? {};
@@ -601,13 +831,15 @@ function MultiChoiceActivity({ activity }: { activity: Activity }) {
                 ? "That's right!"
                 : `The correct answer is ${String.fromCharCode(65 + correct)}: ${options[correct]}.`,
           }}
+          activityTitle={activity.title}
+          onDiscussWithTutor={onDiscussWithTutor}
         />
       )}
     </div>
   );
 }
 
-function TrueFalseActivity({ activity }: { activity: Activity }) {
+function TrueFalseActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
   const [answer, setAnswer] = useState<boolean | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const p = activity.payload ?? {};
@@ -653,13 +885,15 @@ function TrueFalseActivity({ activity }: { activity: Activity }) {
                 ? "Correct!"
                 : p.explanation ?? `The answer is ${correct ? "True" : "False"}.`,
           }}
+          activityTitle={activity.title}
+          onDiscussWithTutor={onDiscussWithTutor}
         />
       )}
     </div>
   );
 }
 
-function ShortAnswerActivity({ activity }: { activity: Activity }) {
+function ShortAnswerActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
   const [response, setResponse] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -669,14 +903,9 @@ function ShortAnswerActivity({ activity }: { activity: Activity }) {
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const res = await fetch("/api/activities/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Demo-User": "usr_student_demo" },
-        body: JSON.stringify({ claim_id: activity.id, student_response: response }),
-      }).catch(() => null);
-      if (res?.ok) {
-        const data = await res.json();
-        setFeedback({ is_correct: data.is_correct, feedback: data.feedback });
+      const result = await callEvaluate(activity.id, response);
+      if (result) {
+        setFeedback(result);
       } else {
         await new Promise((r) => setTimeout(r, 1000));
         setFeedback({
@@ -705,13 +934,13 @@ function ShortAnswerActivity({ activity }: { activity: Activity }) {
           multiline
         />
       ) : (
-        <FeedbackBanner feedback={feedback} />
+        <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
       )}
     </div>
   );
 }
 
-function WrongOnPurposeActivity({ activity }: { activity: Activity }) {
+function WrongOnPurposeActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
   const [response, setResponse] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -721,14 +950,9 @@ function WrongOnPurposeActivity({ activity }: { activity: Activity }) {
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const res = await fetch("/api/activities/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Demo-User": "usr_student_demo" },
-        body: JSON.stringify({ claim_id: activity.id, student_response: response }),
-      }).catch(() => null);
-      if (res?.ok) {
-        const data = await res.json();
-        setFeedback({ is_correct: data.is_correct, feedback: data.feedback });
+      const result = await callEvaluate(activity.id, response);
+      if (result) {
+        setFeedback(result);
       } else {
         await new Promise((r) => setTimeout(r, 1200));
         const isCorrect = response.trim().length > 30;
@@ -775,13 +999,13 @@ function WrongOnPurposeActivity({ activity }: { activity: Activity }) {
           multiline
         />
       ) : (
-        <FeedbackBanner feedback={feedback} />
+        <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
       )}
     </div>
   );
 }
 
-function ScenarioActivity({ activity }: { activity: Activity }) {
+function ScenarioActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
   const [response, setResponse] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -791,14 +1015,9 @@ function ScenarioActivity({ activity }: { activity: Activity }) {
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const res = await fetch("/api/activities/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Demo-User": "usr_student_demo" },
-        body: JSON.stringify({ claim_id: activity.id, student_response: response }),
-      }).catch(() => null);
-      if (res?.ok) {
-        const data = await res.json();
-        setFeedback({ is_correct: data.is_correct, feedback: data.feedback });
+      const result = await callEvaluate(activity.id, response);
+      if (result) {
+        setFeedback(result);
       } else {
         await new Promise((r) => setTimeout(r, 1200));
         setFeedback({
@@ -832,13 +1051,13 @@ function ScenarioActivity({ activity }: { activity: Activity }) {
           multiline
         />
       ) : (
-        <FeedbackBanner feedback={feedback} />
+        <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
       )}
     </div>
   );
 }
 
-function FeynmanActivity({ activity }: { activity: Activity }) {
+function FeynmanActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
   const [response, setResponse] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -848,14 +1067,9 @@ function FeynmanActivity({ activity }: { activity: Activity }) {
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const res = await fetch("/api/activities/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Demo-User": "usr_student_demo" },
-        body: JSON.stringify({ claim_id: activity.id, student_response: response }),
-      }).catch(() => null);
-      if (res?.ok) {
-        const data = await res.json();
-        setFeedback({ is_correct: data.is_correct, feedback: data.feedback });
+      const result = await callEvaluate(activity.id, response);
+      if (result) {
+        setFeedback(result);
       } else {
         await new Promise((r) => setTimeout(r, 1200));
         setFeedback({
@@ -897,13 +1111,13 @@ function FeynmanActivity({ activity }: { activity: Activity }) {
           multiline
         />
       ) : (
-        <FeedbackBanner feedback={feedback} />
+        <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
       )}
     </div>
   );
 }
 
-function AudioOverviewActivity({ activity }: { activity: Activity }) {
+function AudioOverviewActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
   const [response, setResponse] = useState("");
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -930,14 +1144,9 @@ function AudioOverviewActivity({ activity }: { activity: Activity }) {
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const res = await fetch("/api/activities/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Demo-User": "usr_student_demo" },
-        body: JSON.stringify({ claim_id: activity.id, student_response: response }),
-      }).catch(() => null);
-      if (res?.ok) {
-        const data = await res.json();
-        setFeedback({ is_correct: data.is_correct, feedback: data.feedback });
+      const result = await callEvaluate(activity.id, response);
+      if (result) {
+        setFeedback(result);
       } else {
         await new Promise((r) => setTimeout(r, 1000));
         setFeedback({
@@ -998,7 +1207,7 @@ function AudioOverviewActivity({ activity }: { activity: Activity }) {
               multiline
             />
           ) : (
-            <FeedbackBanner feedback={feedback} />
+            <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
           )}
         </>
       )}
@@ -1010,7 +1219,7 @@ function AudioOverviewActivity({ activity }: { activity: Activity }) {
 
 const ACTIVITY_RENDERERS: Record<
   ActivityType,
-  (props: { activity: Activity }) => React.JSX.Element
+  (props: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) => React.JSX.Element
 > = {
   flashcard: FlashcardActivity,
   multi_choice: MultiChoiceActivity,
@@ -1028,12 +1237,14 @@ interface ActivityOverlayProps {
   activityId: string;
   activities: Activity[];
   onClose: () => void;
+  onDiscussWithTutor?: (context: string) => void;
 }
 
 export function ActivityOverlay({
   activityId,
   activities,
   onClose,
+  onDiscussWithTutor,
 }: ActivityOverlayProps) {
   const activity = activities.find((a) => a.id === activityId);
   if (!activity) return null;
@@ -1077,7 +1288,32 @@ export function ActivityOverlay({
                 {activity.topic}
               </p>
             </div>
-            <Renderer activity={activity} />
+            <Renderer activity={activity} onDiscussWithTutor={onDiscussWithTutor} />
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-lg border bg-card">
+          <div className="border-b px-5 py-3">
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Activity History
+            </p>
+          </div>
+          <div className="space-y-3 px-5 py-4">
+            <div className="flex items-center gap-3 text-sm">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
+              <span className="text-muted-foreground">Created</span>
+              <span className="ml-auto font-mono text-xs text-muted-foreground">Sep 14, 2:30 PM</span>
+            </div>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+              <span className="text-muted-foreground">First attempt</span>
+              <span className="ml-auto font-mono text-xs text-muted-foreground">Sep 15, 10:15 AM</span>
+            </div>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+              <span className="text-muted-foreground">Completed &mdash; +{activity.xp} XP earned</span>
+              <span className="ml-auto font-mono text-xs text-muted-foreground">Sep 16, 9:45 AM</span>
+            </div>
           </div>
         </div>
       </div>

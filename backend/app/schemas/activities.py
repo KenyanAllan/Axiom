@@ -98,6 +98,7 @@ class ActivityResponse(BaseModel):
 
 class AttemptResult(BaseModel):
     attempt_id: int
+    claim_id: str
     outcome: Outcome
     hints_used: bool
     xp_awarded: int

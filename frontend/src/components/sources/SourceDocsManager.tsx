@@ -11,7 +11,7 @@ import {
   FileUp,
   X,
 } from "lucide-react";
-import type { SourceDocument } from "@/lib/types";
+import type { SourceDocument, UserRole } from "@/lib/types";
 
 // ── Demo data ─────────────────────────────────────────────────────────────────
 
@@ -79,7 +79,12 @@ const STATUS_BADGE: Record<SourceDocument["status"], React.ReactNode> = {
   ),
 };
 
-export function SourceDocsManager() {
+interface SourceDocsManagerProps {
+  userRole: UserRole;
+}
+
+export function SourceDocsManager({ userRole }: SourceDocsManagerProps) {
+  const canDelete = userRole !== "student";
   const [docs, setDocs] = useState<SourceDocument[]>(INITIAL_DOCS);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -219,30 +224,32 @@ export function SourceDocsManager() {
 
                 {STATUS_BADGE[doc.status]}
 
-                {/* Delete button */}
-                {deleteConfirm === doc.id ? (
-                  <div className="flex items-center gap-1.5">
+                {/* Delete button — hidden for students */}
+                {canDelete && (
+                  deleteConfirm === doc.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleDelete(doc.id)}
+                        className="rounded bg-red-500 px-2 py-1 text-xs font-medium text-white hover:bg-red-600"
+                      >
+                        Delete
+                      </button>
+                      <button
+                        onClick={() => setDeleteConfirm(null)}
+                        className="rounded bg-secondary px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
                     <button
-                      onClick={() => handleDelete(doc.id)}
-                      className="rounded bg-red-500 px-2 py-1 text-xs font-medium text-white hover:bg-red-600"
+                      onClick={() => setDeleteConfirm(doc.id)}
+                      className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600"
+                      title="Delete document"
                     >
-                      Delete
+                      <Trash2 className="h-4 w-4" />
                     </button>
-                    <button
-                      onClick={() => setDeleteConfirm(null)}
-                      className="rounded bg-secondary px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setDeleteConfirm(doc.id)}
-                    className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600"
-                    title="Delete document"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  )
                 )}
               </div>
             ))}

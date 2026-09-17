@@ -1,6 +1,7 @@
 "use client";
 
-import { Flame, Trophy } from "lucide-react";
+import { useState } from "react";
+import { Flame, Trophy, ArrowLeft, Medal, Crown } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import type { UserProfile } from "@/lib/types";
@@ -11,6 +12,17 @@ interface RightSidebarProps {
   onActivityClick?: (activityId: string) => void;
 }
 
+const LEADERBOARD = [
+  { rank: 1, name: "Maya R.", xp: 2480, streak: 12, level: 13 },
+  { rank: 2, name: "Jordan L.", xp: 2210, streak: 9, level: 12 },
+  { rank: 3, name: "Sam T.", xp: 1950, streak: 6, level: 10 },
+  { rank: 4, name: "Alex K.", xp: 1720, streak: 8, level: 9 },
+  { rank: 5, name: "Taylor M.", xp: 1540, streak: 4, level: 8 },
+  { rank: 6, name: "Casey P.", xp: 1380, streak: 5, level: 7 },
+  { rank: 7, name: "Morgan W.", xp: 1120, streak: 3, level: 6 },
+  { rank: 8, name: "Riley J.", xp: 940, streak: 2, level: 5 },
+];
+
 const DOMAIN_MASTERY = [
   { domain: "Linear Algebra", percent: 78 },
   { domain: "Data Structures", percent: 45 },
@@ -20,59 +32,61 @@ const DOMAIN_MASTERY = [
 const STUDENT_ACTIVITY = [
   {
     color: "bg-blue-500",
-    title: "Completed Flashcard: Row Invariance",
-    xp: 15,
+    title: "Completed Flashcard: Gaussian Elimination",
+    xp: 25,
     time: "10m ago",
-    activityId: "diag_1",
+    activityId: "act_fc_1",
   },
   {
     color: "bg-blue-600",
-    title: "Passed Micro-Project: Partial Pivot Unit Tests",
-    xp: 120,
+    title: "Passed Multi-Choice: Identifying Pivot Positions",
+    xp: 50,
     time: "1h ago",
-    activityId: "queued_1",
+    activityId: "act_mc_1",
   },
   {
     color: "bg-gray-400",
-    title: "Mastered [claim_ge_01]",
-    xp: 50,
+    title: "Mastered True/False: Echelon Form Uniqueness",
+    xp: 30,
     time: "Yesterday",
-    activityId: "queued_2",
+    activityId: "act_tf_1",
   },
 ];
 
 const CLASS_ACTIVITY = [
   {
     color: "bg-blue-500",
-    title: "Alex K. completed Row Invariance Diagnostic",
-    xp: 15,
+    title: "Alex K. completed Flashcard: Gaussian Elimination",
+    xp: 25,
     time: "10m ago",
-    activityId: "diag_1",
+    activityId: "act_fc_1",
   },
   {
     color: "bg-purple-500",
     title: "Maya R. started Feynman: Elementary Row Ops",
     xp: 50,
     time: "25m ago",
-    activityId: "queued_2",
+    activityId: "act_fy_1",
   },
   {
     color: "bg-blue-600",
-    title: "Jordan L. completed Matrix Inversion Sandbox",
+    title: "Jordan L. completed Scenario: Network Flow",
     xp: 100,
     time: "1h ago",
-    activityId: "queued_1",
+    activityId: "act_sc_1",
   },
   {
     color: "bg-emerald-500",
-    title: "Sam T. mastered Gaussian Elimination",
+    title: "Sam T. mastered Short Answer: Back Substitution",
     xp: 75,
     time: "2h ago",
-    activityId: "diag_1",
+    activityId: "act_sa_1",
   },
 ];
 
 export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+
   const xpForNextLevel = user.level * 200;
   const xpInCurrentLevel = user.xp - (user.level - 1) * 200;
   const progressPercent = Math.min(
@@ -84,6 +98,63 @@ export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
   const isTeacher = user.role === "teacher";
   const recentActivity = isTeacher ? CLASS_ACTIVITY : STUDENT_ACTIVITY;
 
+  if (showLeaderboard) {
+    return (
+      <aside className="flex w-[280px] shrink-0 flex-col overflow-y-auto border-l bg-background">
+        <div className="px-5 py-4">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowLeaderboard(false)}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <Trophy className="h-4 w-4 text-amber-500" />
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Leaderboard
+            </p>
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="px-5 py-4">
+          <div className="space-y-1">
+            {LEADERBOARD.map((s) => (
+              <div
+                key={s.rank}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 ${
+                  s.rank <= 3 ? "bg-accent/40" : ""
+                }`}
+              >
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center">
+                  {s.rank === 1 ? (
+                    <Crown className="h-5 w-5 text-amber-500" />
+                  ) : s.rank <= 3 ? (
+                    <Medal className={`h-5 w-5 ${s.rank === 2 ? "text-gray-400" : "text-amber-700"}`} />
+                  ) : (
+                    <span className="font-mono text-sm font-semibold text-muted-foreground">
+                      {s.rank}
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{s.name}</p>
+                  <p className="font-mono text-[10px] text-muted-foreground">
+                    Lvl {s.level} &middot; {s.streak}d streak
+                  </p>
+                </div>
+                <span className="shrink-0 font-mono text-sm font-bold tabular-nums text-xp">
+                  {formatXP(s.xp)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className="flex w-[280px] shrink-0 flex-col overflow-y-auto border-l bg-background">
       {/* XP / Level block */}
@@ -92,7 +163,13 @@ export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
           <p className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
             Level {user.level} Explorer
           </p>
-          <Trophy className="h-4 w-4 text-primary" />
+          <button
+            onClick={() => setShowLeaderboard(true)}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-primary transition-colors hover:bg-accent"
+            title="Leaderboard"
+          >
+            <Trophy className="h-4 w-4" />
+          </button>
         </div>
 
         <p className="mt-2">
