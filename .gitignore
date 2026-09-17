@@ -47,3 +47,5 @@ htmlcov/
 *.pem
 *.key
 credentials.json
+cloudformation.yaml
+.claude
