@@ -156,9 +156,10 @@ export async function fetchClaims(
 // ── Graph (node map) ──────────────────────────────────────────────────────────
 
 export async function fetchGraph(
-  userId: string
+  userId: string,
+  workspaceId: number = DEMO_WORKSPACE_ID
 ): Promise<GraphResponse> {
-  const res = await fetch(`${BASE}/api/dag/graph`, {
+  const res = await fetch(`${BASE}/api/dag/graph?workspace_id=${workspaceId}`, {
     headers: headers(userId),
   });
   if (!res.ok) throw new Error(`Graph fetch failed: ${res.status}`);
@@ -173,7 +174,7 @@ function mapApiSource(src: ApiSourceDocument): SourceDocument {
     filename: src.filename,
     size_bytes: src.size_bytes ?? 0,
     uploaded_at: src.created_at,
-    status: (src.status === "uploaded" ? "processing" : src.status) as SourceDocument["status"],
+    status: src.status as SourceDocument["status"],
     claim_count: src.claim_count ?? 0,
   };
 }

@@ -172,11 +172,14 @@ export default function Home() {
   }, []);
 
   const handleDeleteSession = useCallback((id: string) => {
-    setSessions((prev) => prev.filter((s) => s.id !== id));
-    setActiveSessionId((prevId) =>
-      prevId === id ? (sessions.length > 1 ? sessions[0].id : null) : prevId
-    );
-  }, [sessions]);
+    setSessions((prev) => {
+      const remaining = prev.filter((s) => s.id !== id);
+      setActiveSessionId((prevId) =>
+        prevId === id ? (remaining[0]?.id ?? null) : prevId
+      );
+      return remaining;
+    });
+  }, []);
 
   if (!mounted || !isLoggedIn || !user) {
     return (
@@ -237,6 +240,7 @@ export default function Home() {
           activities={activities}
           onClose={handleCloseActivity}
           onDiscussWithTutor={handleDiscussWithTutor}
+          onActivitiesChange={setActivities}
         />
       )}
     </div>

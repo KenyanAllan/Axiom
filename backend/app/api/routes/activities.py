@@ -20,12 +20,25 @@ from app.schemas.activities import (
     AttemptCreate,
     AttemptResult,
     ClaimCard,
+    DeckCardResponse,
+    DeckResponse,
     EvaluateRequest,
     EvaluateResult,
+    GenerateDeckRequest,
+    GenerateQuizRequest,
     QueueResponse,
+    QuizOverviewResponse,
+    QuizQuestionResponse,
+    QuizSubmitRequest,
+    QuizSubmitResponse,
+    QuizQuestionResult,
 )
-from app.services.activity_generator import generate_basic_activities
-from app.services.evaluation import evaluate_student_response
+from app.services.activity_generator import (
+    generate_basic_activities,
+    generate_flashcard_deck,
+    generate_quiz,
+)
+from app.services.evaluation import evaluate_student_response, evaluate_quiz
 from app.services.queue import get_user_queue, add_to_queue
 
 logger = logging.getLogger(__name__)
@@ -346,6 +359,113 @@ async def generate_activities(
     )
 
     return [ActivityResponse.model_validate(a) for a in activities]
+
+
+# ── POST /api/activities/generate-deck ──────────────────────────────────────
+
+
+@router.post("/generate-deck", response_model=DeckResponse, status_code=201)
+async def generate_deck(
+    body: GenerateDeckRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DeckResponse:
+    """Generate a flashcard deck with N cards across topics."""
+    try:
+        activity = await generate_flashcard_deck(
+            db=db,
+            workspace_id=body.workspace_id,
+            creator_id=user_id,
+            deck_size=body.deck_size,
+            topic_ids=body.topic_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    cards_payload = activity.payload.get("cards", [])
+    return DeckResponse(
+        activity_id=activity.id,
+        deck_size=len(cards_payload),
+        cards=[DeckCardResponse(**c) for c in cards_payload],
+    )
+
+
+# ── POST /api/activities/generate-quiz ─────────────────────────────────────
+
+
+@router.post("/generate-quiz", response_model=QuizOverviewResponse, status_code=201)
+async def generate_quiz_endpoint(
+    body: GenerateQuizRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> QuizOverviewResponse:
+    """Generate a quiz with mixed question types across topics."""
+    try:
+        activity = await generate_quiz(
+            db=db,
+            workspace_id=body.workspace_id,
+            creator_id=user_id,
+            question_count=body.question_count,
+            topic_ids=body.topic_ids,
+            question_types=body.question_types,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    questions_payload = activity.payload.get("questions", [])
+    questions = []
+    for q in questions_payload:
+        questions.append(QuizQuestionResponse(
+            index=q["index"],
+            type=q["type"],
+            claim_id=q["claim_id"],
+            prompt=q["prompt"],
+            options=q.get("options"),
+        ))
+
+    return QuizOverviewResponse(
+        activity_id=activity.id,
+        question_count=len(questions),
+        questions=questions,
+    )
+
+
+# ── POST /api/activities/quiz/{activity_id}/submit ─────────────────────────
+
+
+@router.post("/quiz/{activity_id}/submit", response_model=QuizSubmitResponse)
+async def submit_quiz(
+    activity_id: int,
+    body: QuizSubmitRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> QuizSubmitResponse:
+    """Submit all quiz answers at once. Grades each question and returns aggregate results."""
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    if activity.type != "quiz":
+        raise HTTPException(status_code=400, detail="Activity is not a quiz")
+
+    try:
+        result = await evaluate_quiz(
+            db=db,
+            user_id=user_id,
+            activity=activity,
+            answers=[a.model_dump() for a in body.answers],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return QuizSubmitResponse(
+        activity_id=result["activity_id"],
+        total_questions=result["total_questions"],
+        correct_count=result["correct_count"],
+        total_xp=result["total_xp"],
+        results=[QuizQuestionResult(**r) for r in result["results"]],
+    )
 
 
 # ── GET /api/activities/flashcards/{topic_id} ────────────────────────────────

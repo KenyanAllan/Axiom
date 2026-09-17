@@ -79,6 +79,7 @@ FROM topics t
 LEFT JOIN atomic_claims ac ON ac.topic_id = t.id
 LEFT JOIN user_mastery um
     ON um.claim_id = ac.id AND um.user_id = :user_id
+WHERE t.workspace_id = :workspace_id
 GROUP BY t.id, t.slug, t.title
 ORDER BY t.title ASC
 """)
@@ -86,30 +87,35 @@ ORDER BY t.title ASC
 
 @router.get("/graph", response_model=GraphResponse)
 async def graph(
+    workspace_id: int,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> GraphResponse:
-    """Return the full topic graph: all topics with mastery counts and prerequisite edges."""
-    # All topics with mastery counts
-    rows = (await db.execute(GRAPH_SQL, {"user_id": user_id})).all()
-    topics = [
-        GraphTopic(
-            topic_id=r.topic_id,
-            slug=r.slug,
-            title=r.title,
-            claim_count=r.claim_count,
-            mastered_count=r.mastered_count,
+    """Return the topic graph for a workspace: topics with mastery counts and prerequisite edges."""
+    # All topics with mastery counts, scoped to workspace
+    rows = (await db.execute(GRAPH_SQL, {"user_id": user_id, "workspace_id": workspace_id})).all()
+    topic_ids = set()
+    topics = []
+    for r in rows:
+        topic_ids.add(r.topic_id)
+        topics.append(
+            GraphTopic(
+                topic_id=r.topic_id,
+                slug=r.slug,
+                title=r.title,
+                claim_count=r.claim_count,
+                mastered_count=r.mastered_count,
+            )
         )
-        for r in rows
-    ]
 
-    # All prerequisite edges
+    # Prerequisite edges, filtered to topics in this workspace
     edge_rows = (
         await db.execute(select(TopicPrerequisite.prerequisite_id, TopicPrerequisite.topic_id))
     ).all()
     edges = [
         GraphEdge(from_id=r.prerequisite_id, to_id=r.topic_id)
         for r in edge_rows
+        if r.topic_id in topic_ids and r.prerequisite_id in topic_ids
     ]
 
     return GraphResponse(topics=topics, edges=edges)

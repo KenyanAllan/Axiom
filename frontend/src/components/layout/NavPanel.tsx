@@ -40,8 +40,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { key: "new_chat", label: "New Chat", icon: <Plus className="h-4 w-4" /> },
   { key: "activity", label: "Activity Feed", icon: <LayoutList className="h-4 w-4" /> },
-  { key: "chat", label: "Chat", icon: <MessageSquare className="h-4 w-4" /> },
-  { key: "wiki", label: "Wiki", icon: <BookText className="h-4 w-4" /> },
+{ key: "wiki", label: "Wiki", icon: <BookText className="h-4 w-4" /> },
   { key: "nodemap", label: "Node Map", icon: <GitBranch className="h-4 w-4" /> },
   { key: "sources", label: "Source Docs", icon: <FileText className="h-4 w-4" /> },
   { key: "dashboard", label: "Dashboard", icon: <BarChart3 className="h-4 w-4" />, teacherOnly: true },

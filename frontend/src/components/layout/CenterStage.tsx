@@ -487,15 +487,9 @@ export function CenterStage({
       try {
         const backendSession = await createChatSession(userId, title);
         const updated = { ...newSession, backendId: backendSession.id };
-        onSessionsChange(
-          sessions.map((s) => (s.id === localId ? updated : s)).concat(
-            sessions.find((s) => s.id === localId) ? [] : [updated]
-          )
+        onSessionsChange((prev: ChatSession[]) =>
+          prev.map((s) => (s.id === localId ? updated : s))
         );
-        onSessionsChange([
-          ...sessions.filter((s) => s.id !== localId),
-          updated,
-        ]);
       } catch {
         // keep local-only session
       }

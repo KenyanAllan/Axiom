@@ -12,13 +12,16 @@ from pydantic import BaseModel, Field
 
 ActivityType = Literal[
     "flashcard",
+    "flashcard_deck",
     "multi_choice",
     "true_false",
     "short_answer",
+    "fill_blank",
     "wrong_on_purpose",
     "scenario",
     "feynman",
     "audio_overview",
+    "quiz",
 ]
 
 ActivityScope = Literal["CLASSROOM_SHARED", "STUDENT_PERSONAL"]
@@ -210,3 +213,83 @@ class HistoryEvent(BaseModel):
     is_correct: bool
     xp_awarded: int
     timestamp: datetime
+
+
+# ── Flashcard deck schemas ─────────────────────────────────────────────────────
+
+QuizQuestionType = Literal["multi_choice", "true_false", "fill_blank", "short_answer"]
+
+
+class GenerateDeckRequest(BaseModel):
+    workspace_id: int = 1
+    deck_size: Literal[5, 10, 15] = 10
+    topic_ids: list[str] | None = Field(
+        None, description="Specific topics to draw from. If empty, picks across all topics."
+    )
+
+
+class DeckCardResponse(BaseModel):
+    index: int
+    claim_id: str
+    front: str
+    back: str
+
+
+class DeckResponse(BaseModel):
+    activity_id: int
+    deck_size: int
+    cards: list[DeckCardResponse]
+
+
+# ── Quiz schemas ───────────────────────────────────────────────────────────────
+
+
+class GenerateQuizRequest(BaseModel):
+    workspace_id: int = 1
+    question_count: int = Field(5, ge=1, le=10)
+    topic_ids: list[str] | None = Field(
+        None, description="Specific topics. If empty, picks across all topics."
+    )
+    question_types: list[QuizQuestionType] | None = Field(
+        None, description="Allowed question types. If empty, uses all types."
+    )
+
+
+class QuizQuestionResponse(BaseModel):
+    index: int
+    type: QuizQuestionType
+    claim_id: str
+    prompt: str
+    options: list[str] | None = None
+
+
+class QuizOverviewResponse(BaseModel):
+    activity_id: int
+    question_count: int
+    questions: list[QuizQuestionResponse]
+
+
+class QuizAnswerItem(BaseModel):
+    question_index: int
+    response: str
+
+
+class QuizSubmitRequest(BaseModel):
+    answers: list[QuizAnswerItem]
+
+
+class QuizQuestionResult(BaseModel):
+    question_index: int
+    claim_id: str
+    type: QuizQuestionType
+    is_correct: bool
+    feedback: str
+    xp_awarded: int
+
+
+class QuizSubmitResponse(BaseModel):
+    activity_id: int
+    total_questions: int
+    correct_count: int
+    total_xp: int
+    results: list[QuizQuestionResult]

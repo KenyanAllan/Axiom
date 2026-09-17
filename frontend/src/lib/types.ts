@@ -7,13 +7,16 @@ export type Outcome = "understood" | "did_not_understand" | "neutral";
 
 export type ActivityType =
   | "flashcard"
+  | "flashcard_deck"
   | "multi_choice"
   | "true_false"
   | "short_answer"
+  | "fill_blank"
   | "wrong_on_purpose"
   | "scenario"
   | "feynman"
-  | "audio_overview";
+  | "audio_overview"
+  | "quiz";
 
 export interface UserProfile {
   id: string;

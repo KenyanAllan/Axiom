@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import {
   AlertTriangle,
+  AlertCircle,
   Boxes,
   Users,
+  ChevronLeft,
   ChevronRight,
   X,
+  XCircle,
   Plus,
   Layers,
   CheckCircle2,
@@ -64,56 +67,55 @@ export const INITIAL_ACTIVITIES: Activity[] = [
   {
     id: "act_fc_1",
     type: "flashcard",
-    title: "Gaussian Elimination Definition",
+    title: "Row Reduction Essentials",
     topic: "Row Reduction & Echelon Forms",
     xp: 25,
     payload: {
-      front:
-        "What is the goal of Gaussian Elimination?",
-      back: "To transform a system of linear equations into row echelon form using elementary row operations, making it easy to solve via back substitution.",
-    },
-  },
-  {
-    id: "act_mc_1",
-    type: "multi_choice",
-    title: "Identifying Pivot Positions",
-    topic: "Row Reduction & Echelon Forms",
-    xp: 50,
-    payload: {
-      question:
-        "Which of the following is NOT an elementary row operation?",
-      options: [
-        "Swap two rows",
-        "Multiply a row by a nonzero scalar",
-        "Multiply two rows together",
-        "Add a scalar multiple of one row to another",
+      cards: [
+        { front: "What is the goal of Gaussian Elimination?", back: "To transform a system of linear equations into row echelon form using elementary row operations, making it easy to solve via back substitution." },
+        { front: "What are the three elementary row operations?", back: "1) Swap two rows. 2) Multiply a row by a nonzero scalar. 3) Add a scalar multiple of one row to another." },
+        { front: "What is the difference between REF and RREF?", back: "REF (Row Echelon Form) has zeros below each pivot. RREF (Reduced REF) additionally has zeros above each pivot and all pivots equal to 1. REF is not unique; RREF is." },
+        { front: "What does it mean for a matrix to have a pivot in every column?", back: "The system has a unique solution — there are no free variables." },
+        { front: "What is partial pivoting?", back: "Selecting the largest absolute value in the current column as the pivot element to minimize floating-point error amplification." },
       ],
-      correct_index: 2,
     },
   },
   {
-    id: "act_tf_1",
-    type: "true_false",
-    title: "Echelon Form Uniqueness",
+    id: "act_quiz_1",
+    type: "quiz",
+    title: "Row Reduction & Echelon Forms Quiz",
     topic: "Row Reduction & Echelon Forms",
-    xp: 30,
+    xp: 60,
     payload: {
-      statement:
-        "Every matrix has a unique row echelon form.",
-      correct_answer: false,
-      explanation:
-        "Row echelon form is NOT unique — a matrix can have many row echelon forms. However, the reduced row echelon form (RREF) IS unique.",
-    },
-  },
-  {
-    id: "act_sa_1",
-    type: "short_answer",
-    title: "Explain Back Substitution",
-    topic: "Gaussian Elimination & Row Operations",
-    xp: 75,
-    payload: {
-      prompt:
-        "Describe in 2–3 sentences how back substitution works once a system is in row echelon form.",
+      questions: [
+        {
+          type: "multi_choice",
+          question: "Which of the following is NOT an elementary row operation?",
+          options: ["Swap two rows", "Multiply a row by a nonzero scalar", "Multiply two rows together", "Add a scalar multiple of one row to another"],
+          correct_index: 2,
+        },
+        {
+          type: "true_false",
+          statement: "Every matrix has a unique row echelon form.",
+          correct_answer: false,
+          explanation: "Row echelon form is NOT unique — a matrix can have many row echelon forms. However, the reduced row echelon form (RREF) IS unique.",
+        },
+        {
+          type: "fill_blank",
+          sentence: "A matrix is in row echelon form when all ___ rows are at the bottom and each leading entry is to the ___ of the one above.",
+          blanks: ["zero", "right"],
+        },
+        {
+          type: "short_answer",
+          prompt: "Describe in 2–3 sentences how back substitution works once a system is in row echelon form.",
+        },
+        {
+          type: "multi_choice",
+          question: "If a 3×4 augmented matrix has pivots in columns 1, 2, and 3, the system has:",
+          options: ["No solution", "Exactly one solution", "Infinitely many solutions", "Cannot be determined"],
+          correct_index: 1,
+        },
+      ],
     },
   },
   {
@@ -171,33 +173,28 @@ export const INITIAL_ACTIVITIES: Activity[] = [
 
 // ── Type config ──────────────────────────────────────────────────────────────
 
-export const TYPE_CONFIG: Record<
+const DEFAULT_TYPE_CONFIG = {
+  label: "Activity",
+  icon: Boxes,
+  color: "text-gray-500",
+  bg: "bg-gray-50",
+};
+
+export const TYPE_CONFIG: Partial<Record<
   ActivityType,
   { label: string; icon: any; color: string; bg: string }
-> = {
+>> = {
   flashcard: {
-    label: "Flashcard",
+    label: "Flashcard Deck",
     icon: Layers,
     color: "text-sky-500",
     bg: "bg-sky-50",
   },
-  multi_choice: {
-    label: "Multiple Choice",
+  quiz: {
+    label: "Quiz",
     icon: CheckCircle2,
     color: "text-green-500",
     bg: "bg-green-50",
-  },
-  true_false: {
-    label: "True / False",
-    icon: ToggleLeft,
-    color: "text-indigo-500",
-    bg: "bg-indigo-50",
-  },
-  short_answer: {
-    label: "Short Answer",
-    icon: PenLine,
-    color: "text-orange-500",
-    bg: "bg-orange-50",
   },
   wrong_on_purpose: {
     label: "Wrong on Purpose",
@@ -225,16 +222,20 @@ export const TYPE_CONFIG: Record<
   },
 };
 
-export const XP_BY_TYPE: Record<ActivityType, number> = {
+export function getTypeConfig(type: ActivityType) {
+  return TYPE_CONFIG[type] ?? DEFAULT_TYPE_CONFIG;
+}
+
+export const XP_BY_TYPE: Partial<Record<ActivityType, number>> = {
   flashcard: 25,
-  multi_choice: 50,
-  true_false: 30,
-  short_answer: 75,
+  quiz: 60,
   wrong_on_purpose: 75,
   scenario: 100,
   feynman: 50,
   audio_overview: 40,
 };
+
+const DEFAULT_XP = 30;
 
 // ── Collapsed list view ──────────────────────────────────────────────────────
 
@@ -317,7 +318,7 @@ export function ActivityFeed({
       type: fType,
       title: fTitle.trim(),
       topic: fTopic.trim(),
-      xp: XP_BY_TYPE[fType],
+      xp: XP_BY_TYPE[fType] ?? DEFAULT_XP,
     };
     onActivitiesChange([newActivity, ...activities]);
     setFTitle("");
@@ -328,9 +329,7 @@ export function ActivityFeed({
 
   const ALL_TYPES: ActivityType[] = [
     "flashcard",
-    "multi_choice",
-    "true_false",
-    "short_answer",
+    "quiz",
     "wrong_on_purpose",
     "scenario",
     "feynman",
@@ -427,7 +426,7 @@ export function ActivityFeed({
             </div>
             <div className="flex flex-wrap gap-1.5">
               {ALL_TYPES.map((t) => {
-                const c = TYPE_CONFIG[t];
+                const c = getTypeConfig(t);
                 const Icon = c.icon;
                 return (
                   <button
@@ -466,7 +465,7 @@ export function ActivityFeed({
       )}
 
       {activities.map((activity) => {
-        const config = TYPE_CONFIG[activity.type];
+        const config = getTypeConfig(activity.type);
         const Icon = config.icon;
         return (
           <button
@@ -754,222 +753,366 @@ function SubmitRow({
 
 // ── Per-type activity cards ──────────────────────────────────────────────────
 
-function FlashcardActivity({ activity }: { activity: Activity }) {
-  const [revealed, setRevealed] = useState(false);
-  const p = activity.payload ?? {};
-  return (
-    <div className="space-y-4">
-      <div className="rounded-lg border bg-secondary/20 p-5">
-        <p className="text-center text-sm font-medium leading-relaxed">
-          {p.front ?? activity.title}
-        </p>
-      </div>
-      {!revealed ? (
-        <button
-          onClick={() => setRevealed(true)}
-          className="mx-auto flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-        >
-          <Eye className="h-4 w-4" />
-          Reveal Answer
-        </button>
-      ) : (
-        <>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5">
-            <p className="text-center text-sm leading-relaxed text-foreground/80">
-              {p.back ?? "No answer provided."}
-            </p>
-          </div>
-          <button
-            onClick={() => setRevealed(false)}
-            className="mx-auto flex items-center gap-2 rounded-md border px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Flip back
-          </button>
-        </>
-      )}
-    </div>
-  );
+interface RendererProps {
+  activity: Activity;
+  onDiscussWithTutor?: (context: string) => void;
+  onSaveResult?: (result: { lastResponse: string; lastFeedback: FeedbackState }) => void;
 }
 
-function MultiChoiceActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
-  const [selected, setSelected] = useState<number | null>(null);
-  const [submitted, setSubmitted] = useState(false);
-  const p = activity.payload ?? {};
-  const options: string[] = p.options ?? [];
-  const correct: number = p.correct_index ?? 0;
+// ── Flashcard Deck ──────────────────────────────────────────────────────────
 
-  return (
-    <div className="space-y-4">
-      <p className="text-sm font-medium leading-relaxed">
-        {p.question ?? activity.title}
-      </p>
-      <div className="space-y-2">
-        {options.map((opt, i) => {
-          let cls =
-            "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors";
-          if (submitted) {
-            if (i === correct) cls += " border-emerald-300 bg-emerald-50";
-            else if (i === selected) cls += " border-red-300 bg-red-50";
-            else cls += " opacity-50";
-          } else {
-            cls +=
-              i === selected
-                ? " border-primary bg-primary/5"
-                : " hover:bg-accent/30";
-          }
-          return (
-            <button
-              key={i}
-              onClick={() => !submitted && setSelected(i)}
-              className={cls}
-              disabled={submitted}
-            >
-              <span
-                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
-                  i === selected && !submitted
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : ""
-                }`}
-              >
-                {String.fromCharCode(65 + i)}
-              </span>
-              {opt}
-            </button>
-          );
-        })}
-      </div>
-      {!submitted ? (
-        <div className="flex justify-end">
-          <button
-            onClick={() => setSubmitted(true)}
-            disabled={selected === null}
-            className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background hover:bg-foreground/90 disabled:opacity-40"
-          >
-            Check Answer
-          </button>
-        </div>
-      ) : (
-        <FeedbackBanner
-          feedback={{
-            is_correct: selected === correct,
-            feedback:
-              selected === correct
-                ? "That's right!"
-                : `The correct answer is ${String.fromCharCode(65 + correct)}: ${options[correct]}.`,
-          }}
-          activityTitle={activity.title}
-          onDiscussWithTutor={onDiscussWithTutor}
-        />
-      )}
-    </div>
-  );
-}
+type FlashCard = { front: string; back: string };
+type FlashAssessment = "knew" | "learning" | null;
 
-function TrueFalseActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
-  const [answer, setAnswer] = useState<boolean | null>(null);
-  const [submitted, setSubmitted] = useState(false);
-  const p = activity.payload ?? {};
-  const correct: boolean = p.correct_answer ?? true;
+function FlashcardDeckActivity({ activity, onSaveResult }: RendererProps) {
+  const cards: FlashCard[] = (() => {
+    const p = activity.payload ?? {};
+    if (Array.isArray(p.cards) && p.cards.length > 0) return p.cards as FlashCard[];
+    return [{ front: (p.front as string) ?? activity.title, back: (p.back as string) ?? "No answer provided." }];
+  })();
 
-  const handlePick = (val: boolean) => {
-    if (submitted) return;
-    setAnswer(val);
-    setSubmitted(true);
+  const savedAssessments: FlashAssessment[] | null = (() => {
+    if (!activity.lastResponse) return null;
+    try {
+      const parsed = JSON.parse(activity.lastResponse);
+      if (Array.isArray(parsed) && parsed.length === cards.length) return parsed as FlashAssessment[];
+    } catch { /* ignore */ }
+    return null;
+  })();
+
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [revealed, setRevealed] = useState<boolean[]>(() => new Array(cards.length).fill(false));
+  const [assessments, setAssessments] = useState<FlashAssessment[]>(() => savedAssessments ?? new Array(cards.length).fill(null));
+  const [showSummary, setShowSummary] = useState(() => savedAssessments !== null);
+
+  const totalCount = cards.length;
+  const knewCount = assessments.filter((a) => a === "knew").length;
+  const learningCount = assessments.filter((a) => a === "learning").length;
+
+  const handleReveal = () => {
+    setRevealed((prev) => { const next = [...prev]; next[currentIndex] = true; return next; });
+  };
+  const handleHide = () => {
+    setRevealed((prev) => { const next = [...prev]; next[currentIndex] = false; return next; });
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="rounded-lg border bg-secondary/20 p-5">
-        <p className="text-center text-sm font-medium leading-relaxed">
-          {p.statement ?? activity.title}
-        </p>
-      </div>
-      <div className="flex justify-center gap-4">
-        {[true, false].map((val) => {
-          let cls =
-            "rounded-lg border px-8 py-3 text-sm font-semibold transition-colors";
-          if (submitted) {
-            if (val === correct) cls += " border-emerald-300 bg-emerald-50 text-emerald-700";
-            else if (val === answer) cls += " border-red-300 bg-red-50 text-red-700";
-            else cls += " opacity-40";
-          } else {
-            cls += " hover:bg-accent/30";
-          }
-          return (
-            <button key={String(val)} onClick={() => handlePick(val)} className={cls} disabled={submitted}>
-              {val ? "True" : "False"}
-            </button>
-          );
-        })}
-      </div>
-      {submitted && (
-        <FeedbackBanner
-          feedback={{
-            is_correct: answer === correct,
-            feedback:
-              answer === correct
-                ? "Correct!"
-                : p.explanation ?? `The answer is ${correct ? "True" : "False"}.`,
-          }}
-          activityTitle={activity.title}
-          onDiscussWithTutor={onDiscussWithTutor}
-        />
-      )}
-    </div>
-  );
-}
-
-function ShortAnswerActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
-  const [response, setResponse] = useState("");
-  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const p = activity.payload ?? {};
-
-  const handleSubmit = async () => {
-    if (!response.trim() || isLoading) return;
-    setIsLoading(true);
-    try {
-      const result = await callEvaluate(activity.id, response);
-      if (result) {
-        setFeedback(result);
-      } else {
-        await new Promise((r) => setTimeout(r, 1000));
-        setFeedback({
-          is_correct: response.trim().length > 20,
-          feedback:
-            response.trim().length > 20
-              ? "Good response! Your explanation demonstrates understanding of the core concept."
-              : "Try to provide a more detailed explanation. Think about the key steps involved.",
-        });
-      }
-    } finally {
-      setIsLoading(false);
+  const handleAssess = (value: "knew" | "learning") => {
+    const next = [...assessments];
+    next[currentIndex] = value;
+    setAssessments(next);
+    if (next.every((a) => a !== null)) {
+      const knew = next.filter((a) => a === "knew").length;
+      onSaveResult?.({ lastResponse: JSON.stringify(next), lastFeedback: { is_correct: knew > totalCount / 2, feedback: `${knew}/${totalCount} cards mastered` } });
+      setShowSummary(true);
+    } else if (currentIndex < totalCount - 1) {
+      setCurrentIndex((i) => i + 1);
     }
   };
 
+  const handleRestart = () => {
+    setCurrentIndex(0);
+    setRevealed(new Array(cards.length).fill(false));
+    setAssessments(new Array(cards.length).fill(null));
+    setShowSummary(false);
+  };
+
+  if (showSummary) {
+    const pct = totalCount > 0 ? Math.round((knewCount / totalCount) * 100) : 0;
+    return (
+      <div className="space-y-5">
+        <div className="rounded-lg border bg-card p-6 text-center">
+          <p className="text-3xl font-bold tracking-tight">{pct}%</p>
+          <p className="mt-1 text-sm text-muted-foreground">Cards mastered</p>
+          <div className="mx-auto mt-4 flex max-w-xs items-center justify-center gap-6 text-sm">
+            <span className="flex items-center gap-1.5 text-emerald-600"><CheckCircle2 className="h-4 w-4" />{knewCount} knew</span>
+            <span className="flex items-center gap-1.5 text-amber-600"><RotateCcw className="h-4 w-4" />{learningCount} learning</span>
+          </div>
+          <div className="mx-auto mt-4 h-2 max-w-xs overflow-hidden rounded-full bg-secondary">
+            <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+        <button onClick={handleRestart} className="mx-auto flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent">
+          <RotateCcw className="h-3.5 w-3.5" />Study again
+        </button>
+      </div>
+    );
+  }
+
+  const card = cards[currentIndex];
+  const isRevealed = revealed[currentIndex];
+  const assessment = assessments[currentIndex];
+  const progressPct = ((currentIndex + 1) / totalCount) * 100;
+
   return (
     <div className="space-y-4">
-      <p className="text-sm font-medium leading-relaxed">{p.prompt ?? activity.title}</p>
-      {!feedback ? (
-        <SubmitRow
-          value={response}
-          onChange={setResponse}
-          onSubmit={handleSubmit}
-          isLoading={isLoading}
-          placeholder="Type your answer..."
-          multiline
-        />
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Card {currentIndex + 1} of {totalCount}</span>
+          <span>{assessments.filter((a) => a !== null).length} assessed</span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+          <div className="h-full rounded-full bg-sky-500 transition-all" style={{ width: `${progressPct}%` }} />
+        </div>
+      </div>
+      <div className="rounded-lg border bg-secondary/20 p-5 transition-all">
+        <p className="text-center text-sm font-medium leading-relaxed">{card.front}</p>
+      </div>
+      {!isRevealed ? (
+        <button onClick={handleReveal} className="mx-auto flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent">
+          <Eye className="h-4 w-4" />Reveal Answer
+        </button>
       ) : (
-        <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+        <div className="space-y-3 transition-all">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5">
+            <p className="text-center text-sm leading-relaxed text-foreground/80">{card.back}</p>
+          </div>
+          <button onClick={handleHide} className="mx-auto flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent">
+            <EyeOff className="h-3.5 w-3.5" />Hide
+          </button>
+          <div className="flex items-center justify-center gap-3">
+            <button onClick={() => handleAssess("knew")} className={`flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium transition-colors ${assessment === "knew" ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "text-emerald-600 hover:bg-emerald-50"}`}>
+              <CheckCircle2 className="h-4 w-4" />I knew this
+            </button>
+            <button onClick={() => handleAssess("learning")} className={`flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium transition-colors ${assessment === "learning" ? "border-amber-300 bg-amber-50 text-amber-700" : "text-amber-600 hover:bg-amber-50"}`}>
+              <RotateCcw className="h-4 w-4" />Still learning
+            </button>
+          </div>
+        </div>
       )}
+      <div className="flex items-center justify-between pt-2">
+        <button onClick={() => setCurrentIndex((i) => i - 1)} disabled={currentIndex === 0} className="flex items-center gap-1 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40">
+          <ChevronLeft className="h-4 w-4" />Previous
+        </button>
+        <button onClick={() => setCurrentIndex((i) => i + 1)} disabled={currentIndex === totalCount - 1} className="flex items-center gap-1 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40">
+          Next<ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }
 
-function WrongOnPurposeActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
-  const [response, setResponse] = useState("");
-  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+// ── Quiz Activity ───────────────────────────────────────────────────────────
+
+type QuizQuestionDef =
+  | { type: "multi_choice"; question: string; options: string[]; correct_index: number }
+  | { type: "true_false"; statement: string; correct_answer: boolean; explanation?: string }
+  | { type: "short_answer"; prompt: string }
+  | { type: "fill_blank"; sentence: string; blanks: string[] };
+
+function getQuestionText(q: QuizQuestionDef): string {
+  switch (q.type) {
+    case "multi_choice": return q.question;
+    case "true_false": return q.statement;
+    case "short_answer": return q.prompt;
+    case "fill_blank": return q.sentence;
+  }
+}
+
+function gradeQuestion(q: QuizQuestionDef, answer: any): { correct: boolean; needsReview: boolean } {
+  switch (q.type) {
+    case "multi_choice": return { correct: answer === q.correct_index, needsReview: false };
+    case "true_false": return { correct: answer === q.correct_answer, needsReview: false };
+    case "short_answer": return { correct: false, needsReview: true };
+    case "fill_blank": {
+      const student: string[] = answer ?? [];
+      return { correct: q.blanks.every((b, i) => (student[i] ?? "").trim().toLowerCase() === b.trim().toLowerCase()), needsReview: false };
+    }
+  }
+}
+
+function QuizMCRenderer({ question, answer, onChange }: { question: Extract<QuizQuestionDef, { type: "multi_choice" }>; answer: number | undefined; onChange: (v: number) => void }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-medium leading-relaxed">{question.question}</p>
+      <div className="space-y-2">
+        {question.options.map((opt, i) => (
+          <button key={i} onClick={() => onChange(i)} className={`flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors ${answer === i ? "border-primary bg-primary/5" : "hover:bg-accent/30"}`}>
+            <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${answer === i ? "border-primary bg-primary text-primary-foreground" : ""}`}>{String.fromCharCode(65 + i)}</span>
+            {opt}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuizTFRenderer({ question, answer, onChange }: { question: Extract<QuizQuestionDef, { type: "true_false" }>; answer: boolean | undefined; onChange: (v: boolean) => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-secondary/20 p-5">
+        <p className="text-center text-sm font-medium leading-relaxed">{question.statement}</p>
+      </div>
+      <div className="flex justify-center gap-4">
+        {[true, false].map((val) => (
+          <button key={String(val)} onClick={() => onChange(val)} className={`rounded-lg border px-8 py-3 text-sm font-semibold transition-colors ${answer === val ? "border-primary bg-primary/10 text-primary" : "hover:bg-accent/30"}`}>
+            {val ? "True" : "False"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuizSARenderer({ question, answer, onChange }: { question: Extract<QuizQuestionDef, { type: "short_answer" }>; answer: string | undefined; onChange: (v: string) => void }) {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-medium leading-relaxed">{question.prompt}</p>
+      <textarea value={answer ?? ""} onChange={(e) => onChange(e.target.value)} placeholder="Type your answer..." className={`${inputCls} min-h-[100px] resize-none`} rows={4} />
+    </div>
+  );
+}
+
+function QuizFBRenderer({ question, answer, onChange }: { question: Extract<QuizQuestionDef, { type: "fill_blank" }>; answer: string[] | undefined; onChange: (v: string[]) => void }) {
+  const blanks = answer ?? question.blanks.map(() => "");
+  const parts = question.sentence.split("___");
+  const updateBlank = (idx: number, val: string) => { const next = [...blanks]; next[idx] = val; onChange(next); };
+  return (
+    <div className="space-y-4">
+      <p className="text-sm leading-relaxed">
+        {parts.map((part, i) => (
+          <span key={i}>
+            {part}
+            {i < parts.length - 1 && (
+              <input type="text" value={blanks[i] ?? ""} onChange={(e) => updateBlank(i, e.target.value)} className="mx-1 inline-block w-[120px] border-b-2 border-primary/40 bg-transparent px-1 py-0.5 text-center text-sm font-medium focus:border-primary focus:outline-none" placeholder={`blank ${i + 1}`} />
+            )}
+          </span>
+        ))}
+      </p>
+    </div>
+  );
+}
+
+function QuizProgressDots({ total, current, answered }: { total: number; current: number; answered: Record<number, any> }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {Array.from({ length: total }, (_, i) => {
+        const isAnswered = answered[i] !== undefined;
+        const isCurrent = i === current;
+        return <span key={i} className={`h-2.5 w-2.5 rounded-full transition-all ${isCurrent ? "ring-2 ring-primary ring-offset-2 ring-offset-background " + (isAnswered ? "bg-primary" : "bg-primary/30") : isAnswered ? "bg-primary" : "border border-muted-foreground/30 bg-transparent"}`} />;
+      })}
+    </div>
+  );
+}
+
+function QuizScoreSummary({ questions, answers, score, total, activityTitle, onDiscussWithTutor }: { questions: QuizQuestionDef[]; answers: Record<number, any>; score: number; total: number; activityTitle: string; onDiscussWithTutor?: (ctx: string) => void }) {
+  const pct = total > 0 ? Math.round((score / total) * 100) : 0;
+  const passed = score > total / 2;
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col items-center gap-2 rounded-lg border bg-card px-6 py-6">
+        <div className={`text-4xl font-bold ${passed ? "text-emerald-600" : "text-amber-600"}`}>{score}/{total}</div>
+        <p className="text-sm text-muted-foreground">{pct}% correct</p>
+        <span className={`mt-1 rounded-full px-3 py-1 text-xs font-medium ${passed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{passed ? "Passed" : "Needs improvement"}</span>
+      </div>
+      <div className="rounded-lg border bg-card">
+        <div className="border-b px-4 py-3"><p className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Question Breakdown</p></div>
+        <div className="divide-y">
+          {questions.map((q, i) => {
+            const result = gradeQuestion(q, answers[i]);
+            const text = getQuestionText(q);
+            const preview = text.length > 80 ? text.slice(0, 80) + "..." : text;
+            return (
+              <div key={i} className="flex items-center gap-3 px-4 py-3">
+                {result.needsReview ? <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" /> : result.correct ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" /> : <XCircle className="h-4 w-4 shrink-0 text-red-500" />}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{preview}</p>
+                  <p className="text-xs text-muted-foreground">{q.type === "multi_choice" ? "Multiple Choice" : q.type === "true_false" ? "True / False" : q.type === "short_answer" ? "Short Answer" : "Fill in the Blank"}</p>
+                </div>
+                <span className={`shrink-0 text-xs font-medium ${result.needsReview ? "text-amber-600" : result.correct ? "text-emerald-600" : "text-red-600"}`}>{result.needsReview ? "Needs review" : result.correct ? "Correct" : "Incorrect"}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="flex gap-3">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10"><Bot className="h-4 w-4 text-primary" /></div>
+        <div className="min-w-0 flex-1 rounded-lg border bg-card px-4 py-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-primary">Axiom AI</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${passed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{passed ? "Good work" : "Keep practicing"}</span>
+          </div>
+          <p className="mt-2 text-sm leading-relaxed text-foreground/80">
+            {passed ? `Great job! You scored ${score}/${total} (${pct}%). ${score < total ? "Review the questions you missed to strengthen those areas." : "Perfect score!"}` : `You scored ${score}/${total} (${pct}%). Review the incorrect answers and try again.`}
+          </p>
+          {onDiscussWithTutor && (
+            <button onClick={() => onDiscussWithTutor(passed ? `I completed "${activityTitle}" scoring ${score}/${total}. Help me review what I missed.` : `I scored ${score}/${total} on "${activityTitle}". Help me understand these concepts.`)} className="mt-3 flex items-center gap-2 rounded-md border border-primary/30 bg-background px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/5">
+              <MessageSquare className="h-3.5 w-3.5" />Discuss in Chat
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuizActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const questions: QuizQuestionDef[] = (activity.payload as any)?.questions ?? [];
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<number, any>>({});
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    if (activity.lastResponse) {
+      try { const parsed = JSON.parse(activity.lastResponse); setAnswers(parsed); setSubmitted(true); } catch { /* ignore */ }
+    }
+  }, [activity.lastResponse]);
+
+  if (questions.length === 0) return <div className="rounded-lg border bg-card px-5 py-8 text-center"><p className="text-sm text-muted-foreground">No questions found in this quiz.</p></div>;
+
+  const question = questions[currentIndex];
+  const isLast = currentIndex === questions.length - 1;
+
+  const computeScore = () => {
+    let s = 0;
+    questions.forEach((q, i) => { const r = gradeQuestion(q, answers[i]); if (r.correct && !r.needsReview) s++; });
+    return s;
+  };
+
+  const handleAnswer = (value: any) => { if (!submitted) setAnswers((prev) => ({ ...prev, [currentIndex]: value })); };
+
+  const handleSubmit = () => {
+    setSubmitted(true);
+    const score = computeScore();
+    onSaveResult?.({ lastResponse: JSON.stringify(answers), lastFeedback: { is_correct: score > questions.length / 2, feedback: `${score}/${questions.length} correct` } });
+  };
+
+  if (submitted) {
+    return <QuizScoreSummary questions={questions} answers={answers} score={computeScore()} total={questions.length} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium text-muted-foreground">Question {currentIndex + 1} of {questions.length}</p>
+        <QuizProgressDots total={questions.length} current={currentIndex} answered={answers} />
+      </div>
+      <div className="rounded-lg border bg-card px-5 py-5">
+        {question.type === "multi_choice" && <QuizMCRenderer question={question} answer={answers[currentIndex]} onChange={handleAnswer} />}
+        {question.type === "true_false" && <QuizTFRenderer question={question} answer={answers[currentIndex]} onChange={handleAnswer} />}
+        {question.type === "short_answer" && <QuizSARenderer question={question} answer={answers[currentIndex]} onChange={handleAnswer} />}
+        {question.type === "fill_blank" && <QuizFBRenderer question={question} answer={answers[currentIndex]} onChange={handleAnswer} />}
+      </div>
+      <div className="flex items-center justify-between">
+        <button onClick={() => setCurrentIndex((i) => i - 1)} disabled={currentIndex === 0} className="flex items-center gap-1.5 rounded-md border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-40">
+          <ChevronLeft className="h-4 w-4" />Previous
+        </button>
+        {isLast ? (
+          <button onClick={handleSubmit} className="flex items-center gap-1.5 rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-colors hover:bg-foreground/90">
+            Submit Quiz<Send className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <button onClick={() => setCurrentIndex((i) => i + 1)} className="flex items-center gap-1.5 rounded-md border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent">
+            Next<ChevronRight className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WrongOnPurposeActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const [response, setResponse] = useState(activity.lastResponse ?? "");
+  const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const p = activity.payload ?? {};
 
@@ -980,15 +1123,18 @@ function WrongOnPurposeActivity({ activity, onDiscussWithTutor }: { activity: Ac
       const result = await callEvaluate(activity.id, response);
       if (result) {
         setFeedback(result);
+        onSaveResult?.({ lastResponse: response, lastFeedback: result });
       } else {
         await new Promise((r) => setTimeout(r, 1200));
         const isCorrect = response.trim().length > 30;
-        setFeedback({
+        const fb = {
           is_correct: isCorrect,
           feedback: isCorrect
             ? "Good catch! You correctly identified the flaw in the reasoning."
             : "Not quite. Look more carefully at the assumptions being made.",
-        });
+        };
+        setFeedback(fb);
+        onSaveResult?.({ lastResponse: response, lastFeedback: fb });
       }
     } finally {
       setIsLoading(false);
@@ -1026,15 +1172,23 @@ function WrongOnPurposeActivity({ activity, onDiscussWithTutor }: { activity: Ac
           multiline
         />
       ) : (
-        <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+        <>
+          {response && (
+            <div className="rounded-lg border bg-secondary/20 px-4 py-3">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Your Answer</p>
+              <p className="text-sm leading-relaxed text-foreground/80">{response}</p>
+            </div>
+          )}
+          <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+        </>
       )}
     </div>
   );
 }
 
-function ScenarioActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
-  const [response, setResponse] = useState("");
-  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+function ScenarioActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const [response, setResponse] = useState(activity.lastResponse ?? "");
+  const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const p = activity.payload ?? {};
 
@@ -1045,15 +1199,18 @@ function ScenarioActivity({ activity, onDiscussWithTutor }: { activity: Activity
       const result = await callEvaluate(activity.id, response);
       if (result) {
         setFeedback(result);
+        onSaveResult?.({ lastResponse: response, lastFeedback: result });
       } else {
         await new Promise((r) => setTimeout(r, 1200));
-        setFeedback({
+        const fb = {
           is_correct: response.trim().length > 40,
           feedback:
             response.trim().length > 40
               ? "Strong analysis! You've correctly applied the relevant concepts to this scenario."
               : "Try to be more thorough. Consider the constraints and how linear algebra applies here.",
-        });
+        };
+        setFeedback(fb);
+        onSaveResult?.({ lastResponse: response, lastFeedback: fb });
       }
     } finally {
       setIsLoading(false);
@@ -1078,15 +1235,23 @@ function ScenarioActivity({ activity, onDiscussWithTutor }: { activity: Activity
           multiline
         />
       ) : (
-        <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+        <>
+          {response && (
+            <div className="rounded-lg border bg-secondary/20 px-4 py-3">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Your Answer</p>
+              <p className="text-sm leading-relaxed text-foreground/80">{response}</p>
+            </div>
+          )}
+          <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+        </>
       )}
     </div>
   );
 }
 
-function FeynmanActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
-  const [response, setResponse] = useState("");
-  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+function FeynmanActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const [response, setResponse] = useState(activity.lastResponse ?? "");
+  const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const p = activity.payload ?? {};
 
@@ -1097,15 +1262,18 @@ function FeynmanActivity({ activity, onDiscussWithTutor }: { activity: Activity;
       const result = await callEvaluate(activity.id, response);
       if (result) {
         setFeedback(result);
+        onSaveResult?.({ lastResponse: response, lastFeedback: result });
       } else {
         await new Promise((r) => setTimeout(r, 1200));
-        setFeedback({
+        const fb = {
           is_correct: response.trim().length > 30,
           feedback:
             response.trim().length > 30
               ? "Great explanation! You demonstrate a solid grasp of the concept."
               : "Your explanation is a bit brief. Try to explain it as if teaching someone who has never seen this before.",
-        });
+        };
+        setFeedback(fb);
+        onSaveResult?.({ lastResponse: response, lastFeedback: fb });
       }
     } finally {
       setIsLoading(false);
@@ -1138,15 +1306,23 @@ function FeynmanActivity({ activity, onDiscussWithTutor }: { activity: Activity;
           multiline
         />
       ) : (
-        <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+        <>
+          {response && (
+            <div className="rounded-lg border bg-secondary/20 px-4 py-3">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Your Answer</p>
+              <p className="text-sm leading-relaxed text-foreground/80">{response}</p>
+            </div>
+          )}
+          <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+        </>
       )}
     </div>
   );
 }
 
-function AudioOverviewActivity({ activity, onDiscussWithTutor }: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) {
-  const [response, setResponse] = useState("");
-  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+function AudioOverviewActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const [response, setResponse] = useState(activity.lastResponse ?? "");
+  const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const p = activity.payload ?? {};
@@ -1174,15 +1350,18 @@ function AudioOverviewActivity({ activity, onDiscussWithTutor }: { activity: Act
       const result = await callEvaluate(activity.id, response);
       if (result) {
         setFeedback(result);
+        onSaveResult?.({ lastResponse: response, lastFeedback: result });
       } else {
         await new Promise((r) => setTimeout(r, 1000));
-        setFeedback({
+        const fb = {
           is_correct: response.trim().length > 20,
           feedback:
             response.trim().length > 20
               ? "Good listening comprehension! You captured the key takeaways."
               : "Try to provide more detail from the overview.",
-        });
+        };
+        setFeedback(fb);
+        onSaveResult?.({ lastResponse: response, lastFeedback: fb });
       }
     } finally {
       setIsLoading(false);
@@ -1234,7 +1413,15 @@ function AudioOverviewActivity({ activity, onDiscussWithTutor }: { activity: Act
               multiline
             />
           ) : (
-            <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+            <>
+              {response && (
+                <div className="rounded-lg border bg-secondary/20 px-4 py-3">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Your Answer</p>
+                  <p className="text-sm leading-relaxed text-foreground/80">{response}</p>
+                </div>
+              )}
+              <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+            </>
           )}
         </>
       )}
@@ -1244,14 +1431,22 @@ function AudioOverviewActivity({ activity, onDiscussWithTutor }: { activity: Act
 
 // ── Card renderer map ────────────────────────────────────────────────────────
 
-const ACTIVITY_RENDERERS: Record<
+function FallbackActivity({ activity }: RendererProps) {
+  return (
+    <div className="rounded-lg border bg-card px-5 py-8 text-center">
+      <p className="text-sm text-muted-foreground">
+        No renderer available for activity type &ldquo;{activity.type}&rdquo;.
+      </p>
+    </div>
+  );
+}
+
+const ACTIVITY_RENDERERS: Partial<Record<
   ActivityType,
-  (props: { activity: Activity; onDiscussWithTutor?: (context: string) => void }) => React.JSX.Element
-> = {
-  flashcard: FlashcardActivity,
-  multi_choice: MultiChoiceActivity,
-  true_false: TrueFalseActivity,
-  short_answer: ShortAnswerActivity,
+  (props: RendererProps) => React.JSX.Element
+>> = {
+  flashcard: FlashcardDeckActivity,
+  quiz: QuizActivity,
   wrong_on_purpose: WrongOnPurposeActivity,
   scenario: ScenarioActivity,
   feynman: FeynmanActivity,
@@ -1265,6 +1460,7 @@ interface ActivityOverlayProps {
   activities: Activity[];
   onClose: () => void;
   onDiscussWithTutor?: (context: string) => void;
+  onActivitiesChange?: (activities: Activity[]) => void;
 }
 
 export function ActivityOverlay({
@@ -1272,11 +1468,12 @@ export function ActivityOverlay({
   activities,
   onClose,
   onDiscussWithTutor,
+  onActivitiesChange,
 }: ActivityOverlayProps) {
   const activity = activities.find((a) => a.id === activityId);
   if (!activity) return null;
-  const config = TYPE_CONFIG[activity.type];
-  const Renderer = ACTIVITY_RENDERERS[activity.type];
+  const config = getTypeConfig(activity.type);
+  const Renderer = ACTIVITY_RENDERERS[activity.type] ?? FallbackActivity;
 
   return (
     <div
@@ -1315,7 +1512,19 @@ export function ActivityOverlay({
                 {activity.topic}
               </p>
             </div>
-            <Renderer activity={activity} onDiscussWithTutor={onDiscussWithTutor} />
+            <Renderer
+              activity={activity}
+              onDiscussWithTutor={onDiscussWithTutor}
+              onSaveResult={(result) => {
+                onActivitiesChange?.(
+                  activities.map((a) =>
+                    a.id === activity.id
+                      ? { ...a, lastResponse: result.lastResponse, lastFeedback: result.lastFeedback }
+                      : a
+                  )
+                );
+              }}
+            />
           </div>
         </div>
 

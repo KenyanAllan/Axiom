@@ -113,7 +113,7 @@ export function LeftSidebar({ user, onLogout }: LeftSidebarProps) {
       <div className={`flex-1 overflow-y-auto py-3 ${collapsed ? "px-1.5" : "px-3"}`}>
         {!collapsed && (
           <p className="mb-2 px-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-            Axiom Workbench
+            Workbenches
           </p>
         )}
         <nav className="space-y-0.5">

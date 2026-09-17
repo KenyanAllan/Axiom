@@ -118,6 +118,7 @@ async def upload_source_direct(
     size_bytes = len(content)
 
     # Try to upload to S3
+    s3_ok = False
     try:
         from app.services.s3 import _get_client
         from app.core.config import get_settings as _gs
@@ -130,6 +131,7 @@ async def upload_source_direct(
             Body=content,
             ContentType=content_type,
         )
+        s3_ok = True
     except Exception:
         logger.warning("S3 upload skipped (not configured) for %s", file.filename)
 
@@ -146,21 +148,22 @@ async def upload_source_direct(
     await db.flush()
     await db.refresh(doc)
 
-    # Kick off async ingestion pipeline via Celery
-    try:
-        from app.workers.celery_app import ingest_source_document_task
+    # Kick off async ingestion pipeline via Celery (only if S3 upload succeeded)
+    if s3_ok:
+        try:
+            from app.workers.celery_app import ingest_source_document_task
 
-        ingest_source_document_task.delay(
-            source_doc_id=doc.id,
-            workspace_id=doc.workspace_id,
-            s3_key=doc.s3_key,
-            filename=doc.filename,
-            content_type=doc.content_type,
-        )
-    except Exception:
-        logger.warning(
-            "Celery not available — ingestion skipped for doc %s", doc.id
-        )
+            ingest_source_document_task.delay(
+                source_doc_id=doc.id,
+                workspace_id=doc.workspace_id,
+                s3_key=doc.s3_key,
+                filename=doc.filename,
+                content_type=doc.content_type,
+            )
+        except Exception:
+            logger.warning(
+                "Celery not available — ingestion skipped for doc %s", doc.id
+            )
 
     logger.info(
         "Direct upload: registered source doc id=%s, workspace=%s",
@@ -247,13 +250,28 @@ async def list_sources(
     """List all source documents for a workspace."""
     await _verify_workspace_access(db, workspace_id, user_id)
 
-    result = await db.execute(
-        select(SourceDocument)
+    # Single query: fetch docs with claim counts via LEFT JOIN + GROUP BY
+    count_subq = (
+        select(
+            AtomicClaim.source_document_id,
+            func.count().label("claim_count"),
+        )
+        .group_by(AtomicClaim.source_document_id)
+        .subquery()
+    )
+    stmt = (
+        select(SourceDocument, func.coalesce(count_subq.c.claim_count, 0).label("claim_count"))
+        .outerjoin(count_subq, SourceDocument.id == count_subq.c.source_document_id)
         .where(SourceDocument.workspace_id == workspace_id)
         .order_by(SourceDocument.created_at.desc())
     )
-    docs = result.scalars().all()
-    return [await _source_with_claims(db, d) for d in docs]
+    rows = (await db.execute(stmt)).all()
+    results = []
+    for doc, claim_count in rows:
+        resp = SourceResponse.model_validate(doc)
+        resp.claim_count = claim_count
+        results.append(resp)
+    return results
 
 
 # ── DELETE /api/sources/{source_id} ──────────────────────────────────────────

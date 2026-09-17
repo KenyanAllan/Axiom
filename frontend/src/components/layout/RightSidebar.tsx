@@ -44,17 +44,17 @@ const STUDENT_ACTIVITY = [
   },
   {
     color: "bg-blue-600",
-    title: "Passed Multi-Choice: Identifying Pivot Positions",
-    xp: 50,
+    title: "Passed Quiz: Identifying Pivot Positions",
+    xp: 60,
     time: "1h ago",
-    activityId: "act_mc_1",
+    activityId: "act_quiz_1",
   },
   {
     color: "bg-gray-400",
-    title: "Mastered True/False: Echelon Form Uniqueness",
-    xp: 30,
+    title: "Completed Feynman: Elementary Row Ops",
+    xp: 50,
     time: "Yesterday",
-    activityId: "act_tf_1",
+    activityId: "act_fy_1",
   },
 ];
 
@@ -82,10 +82,10 @@ const CLASS_ACTIVITY = [
   },
   {
     color: "bg-emerald-500",
-    title: "Sam T. mastered Short Answer: Back Substitution",
-    xp: 75,
+    title: "Sam T. passed Quiz: Back Substitution",
+    xp: 60,
     time: "2h ago",
-    activityId: "act_sa_1",
+    activityId: "act_quiz_1",
   },
 ];
 
