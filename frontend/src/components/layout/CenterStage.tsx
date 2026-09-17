@@ -30,12 +30,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import type { Activity } from "@/components/activity/ActivityFeed";
 import { SourceDocsManager } from "@/components/sources/SourceDocsManager";
+import { FiguresPage } from "@/components/figures/FiguresPage";
 import { TeacherDashboard } from "@/components/dashboard/TeacherDashboard";
 import { ClassChatHistory } from "@/components/dashboard/ClassChatHistory";
 import type { CompletedActivityReview } from "@/components/activity/CompletedActivityReviewOverlay";
 import { GlossaryTab } from "@/components/glossary/GlossaryTab";
 import { GlossaryInlineCard } from "@/components/glossary/GlossaryInlineCard";
-import type { UserRole, ViewTab, GraphTopic, GraphEdge } from "@/lib/types";
+import type { UserRole, ViewTab, GraphTopic, GraphEdge, Figure } from "@/lib/types";
 import {
   createChatSession,
   sendChatMessage,
@@ -48,7 +49,10 @@ import {
   updateClaim as apiUpdateClaim,
   deleteClaim as apiDeleteClaim,
   synthesizeSpeech,
+  listFiguresByClaim,
+  getFigureViewUrl,
 } from "@/lib/api";
+import FigureLightbox from "@/components/figures/FigureLightbox";
 import { SettingsPage, parseAvatar } from "@/components/settings/SettingsPage";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -939,6 +943,7 @@ export function CenterStage({
           <TabsTrigger value="wiki" />
           <TabsTrigger value="nodemap" />
           <TabsTrigger value="sources" />
+          <TabsTrigger value="figures" />
           <TabsTrigger value="glossary" />
           <TabsTrigger value="dashboard" />
           <TabsTrigger value="class-chats" />
@@ -1021,6 +1026,10 @@ export function CenterStage({
 
         <TabsContent value="sources" className="flex-1 overflow-y-auto">
           <SourceDocsManager userId={userId} userRole={userRole} pendingSourceDocId={pendingSourceDocId} onPendingSourceDocHandled={onPendingSourceDocHandled} />
+        </TabsContent>
+
+        <TabsContent value="figures" className="flex-1 overflow-y-auto">
+          <FiguresPage userId={userId} userRole={userRole} />
         </TabsContent>
 
         <TabsContent value="glossary" className="flex-1 overflow-y-auto">
@@ -1320,6 +1329,88 @@ function ChatBubble({ message, onTabChange, userAvatar, userId }: { message: Cha
         </div>
       )}
     </div>
+  );
+}
+
+// ── Claim Figures (inline thumbnails for wiki claims) ────────────────────────
+
+function ClaimFigures({ claimId, userId }: { claimId: string; userId: string }) {
+  const [figures, setFigures] = useState<Figure[]>([]);
+  const [urls, setUrls] = useState<Record<number, string>>({});
+  const [lightboxFigure, setLightboxFigure] = useState<Figure | null>(null);
+
+  useEffect(() => {
+    listFiguresByClaim(userId, claimId)
+      .then(setFigures)
+      .catch(() => {});
+  }, [userId, claimId]);
+
+  useEffect(() => {
+    if (figures.length === 0) return;
+    Promise.all(
+      figures.slice(0, 4).map(async (fig) => {
+        try {
+          const { url } = await getFigureViewUrl(userId, fig.id);
+          return { id: fig.id, url };
+        } catch {
+          return null;
+        }
+      })
+    ).then((results) => {
+      const newUrls: Record<number, string> = {};
+      for (const r of results) if (r) newUrls[r.id] = r.url;
+      setUrls(newUrls);
+    });
+  }, [figures, userId]);
+
+  if (figures.length === 0) return null;
+
+  return (
+    <>
+      <div className="mt-2 flex items-center gap-2">
+        <ImageIcon className="h-3 w-3 text-muted-foreground" />
+        <span className="text-[10px] font-medium text-muted-foreground">
+          {figures.length} figure{figures.length !== 1 ? "s" : ""}
+        </span>
+        <div className="flex gap-1.5">
+          {figures.slice(0, 4).map((fig) => (
+            <button
+              key={fig.id}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxFigure(fig);
+              }}
+              className="flex h-10 w-10 items-center justify-center overflow-hidden rounded border bg-muted/30 transition-all hover:border-primary/40 hover:shadow-sm"
+            >
+              {urls[fig.id] ? (
+                <img
+                  src={urls[fig.id]}
+                  alt={fig.caption}
+                  className="max-h-full max-w-full object-contain"
+                />
+              ) : (
+                <ImageIcon className="h-4 w-4 text-muted-foreground/40" />
+              )}
+            </button>
+          ))}
+          {figures.length > 4 && (
+            <span className="flex h-10 w-10 items-center justify-center rounded border bg-muted/20 text-[10px] text-muted-foreground">
+              +{figures.length - 4}
+            </span>
+          )}
+        </div>
+      </div>
+      {lightboxFigure && (
+        <FigureLightbox
+          figure={lightboxFigure}
+          figures={figures}
+          userId={userId}
+          onClose={() => setLightboxFigure(null)}
+          onNavigate={(fig) => setLightboxFigure(fig)}
+        />
+      )}
+    </>
   );
 }
 
@@ -1816,6 +1907,7 @@ function DemoWikiTab({
                             </span>
                           ))}
                         </div>
+                        <ClaimFigures claimId={claim.id} userId={userId} />
                         <p className="mt-2 text-[10px] italic text-primary">
                           Discuss in Chat
                         </p>

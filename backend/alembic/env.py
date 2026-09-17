@@ -13,7 +13,16 @@ config = context.config
 settings = get_settings()
 
 # Override the sqlalchemy.url from alembic.ini with the app's setting
-config.set_main_option("sqlalchemy.url", settings.sync_database_url)
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
+
+db_url = os.getenv("SYNC_DATABASE_URL")
+if db_url:
+    config.set_main_option("sqlalchemy.url", db_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

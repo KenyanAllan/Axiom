@@ -438,6 +438,18 @@ export async function listFiguresBySource(
   return res.json();
 }
 
+export async function listFiguresByClaim(
+  userId: string,
+  claimId: string
+): Promise<Figure[]> {
+  const res = await fetch(
+    `${BASE}/api/figures/by-claim/${claimId}`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`List figures by claim failed: ${res.status}`);
+  return res.json();
+}
+
 export async function getFigureViewUrl(
   userId: string,
   figureId: number
@@ -448,6 +460,17 @@ export async function getFigureViewUrl(
   );
   if (!res.ok) throw new Error(`Get figure view URL failed: ${res.status}`);
   return res.json();
+}
+
+export async function deleteFigure(
+  userId: string,
+  figureId: number
+): Promise<void> {
+  const res = await fetch(
+    `${BASE}/api/figures/${figureId}`,
+    { method: "DELETE", headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`Delete figure failed: ${res.status}`);
 }
 
 // ── Chat sessions ─────────────────────────────────────────────────────────────

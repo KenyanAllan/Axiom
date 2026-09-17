@@ -12,6 +12,7 @@ import {
   GitBranch,
   PanelLeftClose,
   PanelLeftOpen,
+  ImageIcon,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import type { WikiPage, ChatSession } from "@/components/layout/CenterStage";
@@ -43,6 +44,7 @@ const NAV_ITEMS: NavItem[] = [
 { key: "wiki", label: "Wiki", icon: <BookText className="h-4 w-4" /> },
   { key: "nodemap", label: "Node Map", icon: <GitBranch className="h-4 w-4" /> },
   { key: "sources", label: "Source Docs", icon: <FileText className="h-4 w-4" /> },
+  { key: "figures", label: "Figures", icon: <ImageIcon className="h-4 w-4" /> },
   { key: "glossary", label: "Glossary", icon: <BookA className="h-4 w-4" /> },
   { key: "dashboard", label: "Dashboard", icon: <BarChart3 className="h-4 w-4" />, teacherOnly: true },
   { key: "class-chats", label: "Class Chats", icon: <MessageSquare className="h-4 w-4" />, teacherOnly: true },

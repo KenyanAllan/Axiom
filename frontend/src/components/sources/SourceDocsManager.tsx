@@ -458,10 +458,12 @@ function getDocIcon(doc: SourceDocument) {
 function DocumentViewer({
   doc,
   userId,
+  userRole,
   onBack,
 }: {
   doc: SourceDocument;
   userId: string;
+  userRole: UserRole;
   onBack: () => void;
 }) {
   const [viewUrl, setViewUrl] = useState<string | null>(null);
@@ -689,7 +691,12 @@ function DocumentViewer({
             </span>
           </div>
           <div className="p-4">
-            <FigureGallery figures={figures} userId={userId} />
+            <FigureGallery
+              figures={figures}
+              userId={userId}
+              userRole={userRole}
+              onFigureDeleted={(id) => setFigures((prev) => prev.filter((f) => f.id !== id))}
+            />
           </div>
         </div>
       )}
@@ -827,6 +834,7 @@ export function SourceDocsManager({ userId, userRole, pendingSourceDocId, onPend
       <DocumentViewer
         doc={selectedDoc}
         userId={userId}
+        userRole={userRole}
         onBack={() => setSelectedDoc(null)}
       />
     );

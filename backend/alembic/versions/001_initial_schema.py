@@ -173,8 +173,8 @@ def upgrade() -> None:
             nullable=False,
             server_default="1",
         ),
-        sa.Column("status", sa.String(), nullable=False, server_default="'unseen'"),
-        sa.Column("history", postgresql.JSONB(), nullable=False, server_default="'[]'"),
+        sa.Column("status", sa.String(), nullable=False, server_default="unseen"),
+        sa.Column("history", postgresql.JSONB(), nullable=False, server_default="[]"),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -209,7 +209,7 @@ def upgrade() -> None:
             "scope",
             sa.String(),
             nullable=False,
-            server_default="'STUDENT_PERSONAL'",
+            server_default="STUDENT_PERSONAL",
         ),
         sa.Column("type", sa.String(), nullable=False),
         sa.Column("title", sa.String(), nullable=False),
@@ -218,11 +218,11 @@ def upgrade() -> None:
             "target_claim_ids",
             postgresql.JSONB(),
             nullable=False,
-            server_default="'[]'",
+            server_default="[]",
         ),
         sa.Column("friction_levers", postgresql.JSONB(), nullable=True),
         sa.Column(
-            "payload", postgresql.JSONB(), nullable=False, server_default="'{}'"
+            "payload", postgresql.JSONB(), nullable=False, server_default="{}"
         ),
         sa.Column("audit_passed", sa.Boolean(), nullable=True),
         sa.Column(

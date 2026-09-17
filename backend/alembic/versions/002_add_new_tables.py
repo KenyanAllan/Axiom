@@ -51,7 +51,7 @@ def upgrade() -> None:
         ),
         sa.Column("transcript_s3_key", sa.String(), nullable=True),
         sa.Column(
-            "metadata", postgresql.JSONB(), nullable=False, server_default="'{}'"
+            "metadata", postgresql.JSONB(), nullable=False, server_default="{}"
         ),
         sa.Column(
             "created_at",

@@ -337,6 +337,7 @@ export type ViewTab =
   | "wiki"
   | "nodemap"
   | "sources"
+  | "figures"
   | "glossary"
   | "dashboard"
   | "class-chats"
