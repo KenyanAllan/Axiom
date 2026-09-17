@@ -52,7 +52,7 @@ services:
       AWS_DEFAULT_REGION: us-east-1
       # In production, inject AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
       # via ECS task role or environment injection — never hard-code here.
-      BEDROCK_MODEL_ID: anthropic.claude-3-5-sonnet-20241022-v2:0
+      BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-6
       BEDROCK_EMBED_MODEL_ID: amazon.titan-embed-text-v2:0
       LOG_LEVEL: debug
     depends_on:
@@ -76,7 +76,7 @@ services:
       SYNC_DATABASE_URL: postgresql+psycopg2://axiom:axiom_dev_secret@postgres:5432/axiom
       REDIS_URL: redis://redis:6379/0
       AWS_DEFAULT_REGION: us-east-1
-      BEDROCK_MODEL_ID: anthropic.claude-3-5-sonnet-20241022-v2:0
+      BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-6
       BEDROCK_EMBED_MODEL_ID: amazon.titan-embed-text-v2:0
     depends_on:
       postgres:

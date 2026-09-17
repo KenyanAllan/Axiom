@@ -1,12 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Axiom Learning Platform — complete AWS infrastructure.
-  Creates VPC, Aurora Serverless v2 (PostgreSQL 16 + pgvector), optional ElastiCache Redis,
-  S3 buckets, EC2 with IAM role (Bedrock/S3/Transcribe/Polly), Elastic IP, and networking.
+  Creates VPC, RDS PostgreSQL 16 (pgvector), optional ElastiCache Redis,
+  S3 buckets, EC2 with IAM role (Bedrock/S3/Transcribe/Polly/Textract), Elastic IP, and networking.
 
   PREREQUISITES (cannot be automated via CloudFormation):
     1. An EC2 key pair in your target region (create in EC2 console > Key Pairs)
-    2. Bedrock model access: request Claude 3.5 Sonnet + Titan Embeddings v2
+    2. Bedrock model access: request Claude Sonnet 4.6 + Titan Embeddings v2
        in the Bedrock console > Model access BEFORE deploying
 
 Metadata:
@@ -17,7 +17,7 @@ Metadata:
       - Label: { default: 'Compute' }
         Parameters: [KeyPairName, InstanceType, SSHAllowedCIDR]
       - Label: { default: 'Database' }
-        Parameters: [DBMasterUsername, DBMasterPassword, AuroraMinACU, AuroraMaxACU]
+        Parameters: [DBMasterUsername, DBMasterPassword, DBInstanceClass]
       - Label: { default: 'Application' }
         Parameters: [JWTSecretKey, CORSOrigins]
       - Label: { default: 'Optional Services' }
@@ -29,8 +29,7 @@ Metadata:
       SSHAllowedCIDR: { default: 'SSH allowed IP range' }
       DBMasterUsername: { default: 'Database admin username' }
       DBMasterPassword: { default: 'Database admin password' }
-      AuroraMinACU: { default: 'Aurora min capacity (ACU)' }
-      AuroraMaxACU: { default: 'Aurora max capacity (ACU)' }
+      DBInstanceClass: { default: 'RDS instance type' }
       JWTSecretKey: { default: 'JWT signing secret' }
       CORSOrigins: { default: 'Allowed CORS origins' }
       IncludeElastiCache: { default: 'Deploy ElastiCache Redis?' }
@@ -78,15 +77,11 @@ Parameters:
     MaxLength: 128
     Description: Min 8 chars. Avoid special characters (used directly in connection URLs).
 
-  AuroraMinACU:
-    Type: Number
-    Default: 0.5
-    Description: 0.5 ACU is the cheapest option (~$44/mo).
-
-  AuroraMaxACU:
-    Type: Number
-    Default: 2
-    Description: Max burst capacity. 2 ACU is sufficient for demo load.
+  DBInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedValues: [db.t4g.micro, db.t4g.small, db.t4g.medium, db.t4g.large]
+    Description: db.t4g.micro (2 vCPU, 1 GB) is cheapest. db.t4g.small recommended for demo.
 
   JWTSecretKey:
     Type: String
@@ -241,10 +236,10 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-ec2-sg'
 
-  AuroraSecurityGroup:
+  RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub '${ProjectName} Aurora PostgreSQL'
+      GroupDescription: !Sub '${ProjectName} RDS PostgreSQL'
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -254,7 +249,7 @@ Resources:
           Description: PostgreSQL from EC2 only
       Tags:
         - Key: Name
-          Value: !Sub '${ProjectName}-aurora-sg'
+          Value: !Sub '${ProjectName}-rds-sg'
 
   RedisSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -290,6 +285,7 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - arn:aws:iam::aws:policy/AmazonTranscribeFullAccess
         - arn:aws:iam::aws:policy/AmazonPollyFullAccess
+        - arn:aws:iam::aws:policy/AmazonTextractFullAccess
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-ec2-role'
@@ -301,54 +297,44 @@ Resources:
       Roles:
         - !Ref EC2Role
 
-  # ── Aurora Serverless v2 (PostgreSQL 16) ──────────────────────────────────
+  # ── RDS PostgreSQL 16 ──────────────────────────────────────────────────────
   # After deploy, connect and run: CREATE EXTENSION IF NOT EXISTS vector;
 
-  AuroraSubnetGroup:
+  RDSSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: !Sub '${ProjectName} Aurora subnets'
+      DBSubnetGroupDescription: !Sub '${ProjectName} RDS subnets'
       SubnetIds:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
       Tags:
         - Key: Name
-          Value: !Sub '${ProjectName}-aurora-subnets'
+          Value: !Sub '${ProjectName}-rds-subnets'
 
-  AuroraCluster:
-    Type: AWS::RDS::DBCluster
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
     DeletionPolicy: Delete
     Properties:
-      DBClusterIdentifier: !Sub '${ProjectName}-cluster'
-      Engine: aurora-postgresql
+      DBInstanceIdentifier: !Sub '${ProjectName}-db-1'
+      Engine: postgres
       EngineVersion: '16.4'
-      ServerlessV2ScalingConfiguration:
-        MinCapacity: !Ref AuroraMinACU
-        MaxCapacity: !Ref AuroraMaxACU
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 20
+      MaxAllocatedStorage: 100
+      StorageType: gp3
       MasterUsername: !Ref DBMasterUsername
       MasterUserPassword: !Ref DBMasterPassword
-      DatabaseName: axiom
-      DBSubnetGroupName: !Ref AuroraSubnetGroup
+      DBName: axiom
+      DBSubnetGroupName: !Ref RDSSubnetGroup
       VpcSecurityGroupIds:
-        - !Ref AuroraSecurityGroup
+        - !Ref RDSSecurityGroup
       StorageEncrypted: true
       BackupRetentionPeriod: 1
       DeletionProtection: false
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-aurora'
-
-  AuroraInstance:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      DBInstanceIdentifier: !Sub '${ProjectName}-db-1'
-      DBClusterIdentifier: !Ref AuroraCluster
-      DBInstanceClass: db.serverless
-      Engine: aurora-postgresql
       PubliclyAccessible: false
       Tags:
         - Key: Name
-          Value: !Sub '${ProjectName}-aurora-instance'
+          Value: !Sub '${ProjectName}-rds'
 
   # ── ElastiCache Redis (conditional — only when IncludeElastiCache = Yes) ──
 
@@ -411,6 +397,17 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  TextractBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-textract-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
   # ── EC2 Instance + Elastic IP ─────────────────────────────────────────────
 
   ElasticIP:
@@ -424,7 +421,7 @@ Resources:
 
   EC2Instance:
     Type: AWS::EC2::Instance
-    DependsOn: AuroraInstance
+    DependsOn: RDSInstance
     Properties:
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyPairName
@@ -488,13 +485,14 @@ Resources:
               AWS_SECRET_ACCESS_KEY=
 
               # ── Bedrock ───────────────────────────────────────────────
-              BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+              BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-6
               BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
 
               # ── S3 Buckets ────────────────────────────────────────────
               S3_BUCKET_NAME=${SourceBucket}
               S3_PRESIGNED_URL_EXPIRY=3600
               TRANSCRIBE_OUTPUT_BUCKET=${TranscribeBucket}
+              TEXTRACT_OUTPUT_BUCKET=${TextractBucketName}
               POLLY_OUTPUT_BUCKET=${AudioBucketName}
               POLLY_VOICE_ID=Matthew
               POLLY_ENGINE=neural
@@ -521,12 +519,13 @@ Resources:
               echo "Next: SSH in, clone your repo into /home/ec2-user/app, copy .env into backend/, and run docker-compose up"
             - DBUser: !Ref DBMasterUsername
               DBPass: !Ref DBMasterPassword
-              DBEndpoint: !GetAtt AuroraCluster.Endpoint.Address
+              DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
               Region: !Ref AWS::Region
               JWTKey: !Ref JWTSecretKey
               CORSValue: !Ref CORSOrigins
               SourceBucket: !Ref SourceDocsBucket
               TranscribeBucket: !Ref TranscriptionsBucket
+              TextractBucketName: !Ref TextractBucket
               AudioBucketName: !Ref AudioBucket
 
   EIPAssociation:
@@ -553,9 +552,9 @@ Outputs:
     Description: Backend URL (after Certbot SSL setup)
     Value: !Sub 'https://${ElasticIP}.sslip.io'
 
-  AuroraEndpoint:
-    Description: Aurora PostgreSQL cluster endpoint
-    Value: !GetAtt AuroraCluster.Endpoint.Address
+  RDSEndpoint:
+    Description: RDS PostgreSQL endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
 
   RedisEndpoint:
     Condition: CreateElastiCache
@@ -574,17 +573,21 @@ Outputs:
     Description: S3 bucket for Polly audio output
     Value: !Ref AudioBucket
 
+  TextractBucketName:
+    Description: S3 bucket for Textract OCR output
+    Value: !Ref TextractBucket
+
   PostDeploySteps:
     Description: Steps to complete after stack creation
     Value: !Sub >-
       POST-DEPLOY CHECKLIST:
-      (1) Request Bedrock model access in ${AWS::Region} if not already done (Claude 3.5 Sonnet + Titan Embeddings v2).
+      (1) Request Bedrock model access in ${AWS::Region} if not already done (Claude Sonnet 4.6 + Titan Embeddings v2).
       (2) SSH in: ssh -i <key>.pem ec2-user@${ElasticIP}
       (3) Clone repo: cd /home/ec2-user/app && git clone <your-repo-url> .
       (4) The .env is pre-generated at /home/ec2-user/app/backend/.env with all values filled in.
-      (5) Enable pgvector on Aurora — from EC2 install psql and run:
+      (5) Enable pgvector on RDS — from EC2 install psql and run:
           sudo dnf install -y postgresql16 &&
-          psql "host=${AuroraCluster.Endpoint.Address} dbname=axiom user=${DBMasterUsername} sslmode=require"
+          psql "host=${RDSInstance.Endpoint.Address} dbname=axiom user=${DBMasterUsername} sslmode=require"
           then: CREATE EXTENSION IF NOT EXISTS vector;
       (6) Run Alembic migrations: cd backend && alembic upgrade head
       (7) Optional first-time seed: RUN_SEED_ON_STARTUP=true python -m scripts.seed

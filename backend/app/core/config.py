@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     aws_default_region: str = "us-east-1"
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
-    bedrock_model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    bedrock_model_id: str = "anthropic.claude-sonnet-4-6"
     bedrock_embed_model_id: str = "amazon.titan-embed-text-v2:0"
 
     # ── Amazon S3 ───────────────────────────────────────────────────────────────
@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     polly_output_bucket: str = "axiom-audio"
     polly_voice_id: str = "Matthew"
     polly_engine: str = "neural"
+
+    # ── Amazon Textract ─────────────────────────────────────────────────────────
+    textract_output_bucket: str = "axiom-textract-results"
 
     # ── JWT Auth ────────────────────────────────────────────────────────────────
     jwt_secret_key: str = "CHANGE-ME-to-a-random-64-char-string"

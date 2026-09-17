@@ -1,4 +1,4 @@
-"""Amazon Bedrock integration — Claude 3.5 Sonnet for grading, Titan for embeddings."""
+"""Amazon Bedrock integration — Claude Sonnet 4.6 for grading, Titan for embeddings."""
 
 from __future__ import annotations
 

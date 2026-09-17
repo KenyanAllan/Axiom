@@ -27,14 +27,16 @@ SIMILARITY_THRESHOLD = 0.82
 TARGET_CHUNK_TOKENS = 800
 MAX_CHUNK_TOKENS = 1200
 OVERLAP_TOKENS = 100
+MIN_CHARS_PER_PAGE_THRESHOLD = 50
 
 
 # ── PDF parsing ──────────────────────────────────────────────────────────────
 
 
 def parse_pdf_to_text(pdf_bytes: bytes) -> str:
-    """Extract plain text from a PDF using PyMuPDF (fitz).
+    """Fallback: extract text from a PDF using PyMuPDF (fitz).
 
+    Used when Textract is unavailable or the file is not in S3.
     Preserves page breaks as double newlines.
     """
     import fitz  # pymupdf
@@ -49,6 +51,45 @@ def parse_pdf_to_text(pdf_bytes: bytes) -> str:
 
     doc.close()
     return "\n\n".join(pages)
+
+
+def textract_pdf_to_text(s3_key: str, source_doc_id: int) -> str:
+    """Extract text from a PDF in S3 using AWS Textract (OCR-capable).
+
+    Polls every 15 seconds, up to 10 minutes max.
+    Falls back to PyMuPDF on failure.
+    """
+    from app.services.textract import (
+        get_detected_text,
+        get_text_detection_status,
+        start_text_detection,
+    )
+
+    job_id = start_text_detection(s3_key, source_doc_id)
+    logger.info("Started Textract job %s for source_doc %s", job_id, source_doc_id)
+
+    max_wait = 600
+    poll_interval = 15
+    elapsed = 0
+
+    while elapsed < max_wait:
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+
+        status = get_text_detection_status(job_id)
+        logger.info("Textract %s status: %s (%ds elapsed)", job_id, status["status"], elapsed)
+
+        if status["status"] == "SUCCEEDED":
+            text = get_detected_text(job_id)
+            if text:
+                logger.info("Textract complete for %s: %d chars", job_id, len(text))
+                return text
+            return ""
+
+        if status["status"] == "FAILED":
+            raise RuntimeError(f"Textract job {job_id} failed")
+
+    raise TimeoutError(f"Textract job {job_id} timed out after {max_wait}s")
 
 
 AUDIO_CONTENT_TYPES = {
@@ -105,10 +146,48 @@ def transcribe_audio_file(s3_key: str, source_doc_id: int) -> str:
     raise TimeoutError(f"Transcription job {job_name} timed out after {max_wait}s")
 
 
-def parse_source_file(file_bytes: bytes, content_type: str, filename: str) -> str:
-    """Route to the correct parser based on content type."""
+def _is_pdf_text_sufficient(text: str, pdf_bytes: bytes) -> bool:
+    """Check if PyMuPDF extracted enough text to skip Textract."""
+    import fitz
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    page_count = max(doc.page_count, 1)
+    doc.close()
+
+    avg_chars_per_page = len(text.strip()) / page_count
+    logger.debug(
+        "PDF text sufficiency: %d chars across %d pages (avg %.1f chars/page, threshold %d)",
+        len(text.strip()),
+        page_count,
+        avg_chars_per_page,
+        MIN_CHARS_PER_PAGE_THRESHOLD,
+    )
+    return avg_chars_per_page >= MIN_CHARS_PER_PAGE_THRESHOLD
+
+
+def parse_source_file(
+    file_bytes: bytes,
+    content_type: str,
+    filename: str,
+    s3_key: str | None = None,
+    source_doc_id: int | None = None,
+) -> str:
+    """Route to the correct parser based on content type.
+
+    For PDFs, tries PyMuPDF first; falls back to Textract for scanned/image PDFs
+    when s3_key and source_doc_id are provided.
+    """
     if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
-        return parse_pdf_to_text(file_bytes)
+        text = parse_pdf_to_text(file_bytes)
+
+        if not _is_pdf_text_sufficient(text, file_bytes) and s3_key and source_doc_id:
+            logger.info(
+                "PyMuPDF extraction insufficient for %s — falling back to Textract",
+                filename,
+            )
+            text = textract_pdf_to_text(s3_key, source_doc_id)
+
+        return text
 
     if content_type.startswith("text/") or filename.lower().endswith((".md", ".txt", ".rst")):
         return file_bytes.decode("utf-8", errors="replace")
@@ -461,14 +540,23 @@ def ingest_source_document(
         if is_audio_file(content_type, filename):
             logger.info("Audio file detected — routing through Transcribe")
             full_text = transcribe_audio_file(s3_key, source_doc_id)
-            # Store transcript reference on the source document
             with Session() as db:
                 doc = db.get(SourceDocument, source_doc_id)
                 if doc:
                     doc.transcript_s3_key = f"transcripts/{source_doc_id}.txt"
                     db.commit()
+        elif content_type == "application/pdf" or filename.lower().endswith(".pdf"):
+            logger.info("PDF detected — routing through Textract for OCR")
+            try:
+                full_text = textract_pdf_to_text(s3_key, source_doc_id)
+            except Exception as exc:
+                logger.warning("Textract failed (%s), falling back to PyMuPDF", exc)
+                full_text = parse_pdf_to_text(file_bytes)
         else:
-            full_text = parse_source_file(file_bytes, content_type, filename)
+            full_text = parse_source_file(
+                file_bytes, content_type, filename,
+                s3_key=s3_key, source_doc_id=source_doc_id,
+            )
     except Exception as exc:
         logger.error("Parse/transcribe failed for %s: %s", filename, exc)
         with Session() as db:

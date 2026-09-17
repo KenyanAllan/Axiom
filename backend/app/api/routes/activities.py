@@ -64,7 +64,7 @@ async def evaluate(
 
     Flow:
       1. Validate claim exists.
-      2. Send claim content + rubric + student response to Claude 3.5 Sonnet
+      2. Send claim content + rubric + student response to Claude Sonnet 4.6
          via the Bedrock Converse API.
       3. If correct -> set mastery = 'mastered', award +50 XP.
       4. Log attempt to mastery history (JSONB).

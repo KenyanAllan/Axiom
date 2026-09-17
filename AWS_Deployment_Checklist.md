@@ -55,7 +55,7 @@
 ## 5. Amazon Bedrock
 
 - [ ] In the Bedrock console, navigate to **Model access** → request access to:
-  - `anthropic.claude-3-5-sonnet-20241022-v2:0` (chat, grading, activity generation, audio scripts)
+  - `anthropic.claude-sonnet-4-6` (chat, grading, activity generation, audio scripts)
   - `amazon.titan-embed-text-v2:0` (1024-dim embeddings for RAG)
 - [ ] Wait for access to be approved (usually instant, can take a few minutes)
 - [ ] Verify with the AWS CLI: `aws bedrock list-foundation-models --region us-east-1`
@@ -239,6 +239,6 @@ These are documented from the codebase audit but are acceptable for a hackathon 
 | `S3_BUCKET_NAME` | No | `axiom-source-documents` | Source document bucket |
 | `POLLY_OUTPUT_BUCKET` | No | `axiom-audio` | Polly audio output bucket |
 | `TRANSCRIBE_OUTPUT_BUCKET` | No | `axiom-transcriptions` | Transcribe output bucket |
-| `BEDROCK_MODEL_ID` | No | `anthropic.claude-3-5-sonnet-20241022-v2:0` | LLM for chat/grading/generation |
+| `BEDROCK_MODEL_ID` | No | `anthropic.claude-sonnet-4-6` | LLM for chat/grading/generation |
 | `BEDROCK_EMBED_MODEL_ID` | No | `amazon.titan-embed-text-v2:0` | Embedding model (1024-dim) |
 | `LOG_LEVEL` | No | `info` | `debug` / `info` / `warning` |
