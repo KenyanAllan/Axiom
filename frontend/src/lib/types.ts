@@ -1,7 +1,7 @@
 // ── API response types — mirrors backend Pydantic schemas ─────────────────
 
 export type MasteryStatus = "unseen" | "active" | "mastered";
-export type DiagnosticType = "wrong_on_purpose" | "myth_buster" | "feynman" | "micro_project";
+export type DiagnosticType = "wrong_on_purpose" | "feynman" | "micro_project";
 export const BACKEND_TYPE_MAP: Record<string, string> = {
   wrong_on_purpose: "myth_buster",
 };
@@ -199,6 +199,7 @@ export interface HistoryEvent {
   feedback: string | null;
   xp_awarded: number;
   timestamp: string;
+  activity_type?: string;
 }
 
 // ── Claim / topic detail types (for wiki wiring) ─────────────────────────────

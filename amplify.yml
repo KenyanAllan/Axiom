@@ -8,6 +8,7 @@ applications:
             - npm ci
         build:
           commands:
+            - echo "NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL" >> .env.production.local
             - npm run build
       artifacts:
         baseDirectory: out

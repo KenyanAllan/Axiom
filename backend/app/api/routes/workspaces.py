@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -80,7 +80,7 @@ async def delete_workspace_endpoint(
     workspace_id: int,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-):
+) -> Response:
     """Delete a personal workspace. Returns 403 if it is classroom-shared."""
     try:
         await delete_workspace(db=db, workspace_id=workspace_id, user_id=user_id)
@@ -88,4 +88,4 @@ async def delete_workspace_endpoint(
         raise HTTPException(status_code=403, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    return None
+    return Response(status_code=204)

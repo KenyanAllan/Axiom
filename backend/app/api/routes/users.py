@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models.tables import ActivityAttempt, AtomicClaim, Topic, User, UserMastery
+from app.models.tables import Activity, ActivityAttempt, AtomicClaim, Topic, User, UserMastery
 from app.schemas.activities import HistoryEvent, MasteryEntry, UserProfile, UserProfileUpdate
 
 logger = logging.getLogger(__name__)
@@ -134,8 +134,9 @@ async def get_my_history(
     db: AsyncSession = Depends(get_db),
 ) -> list[HistoryEvent]:
     stmt = (
-        select(ActivityAttempt, AtomicClaim.title)
+        select(ActivityAttempt, AtomicClaim.title, Activity.type)
         .outerjoin(AtomicClaim, ActivityAttempt.claim_id == AtomicClaim.id)
+        .outerjoin(Activity, ActivityAttempt.activity_id == Activity.id)
         .where(ActivityAttempt.user_id == user_id)
         .order_by(ActivityAttempt.attempted_at.desc())
         .offset(offset)
@@ -155,10 +156,11 @@ async def get_my_history(
             claim_title=claim_title or "Unknown",
             is_correct=(attempt.outcome == "understood"),
             outcome=attempt.outcome,
+            activity_type=activity_type,
             student_response=attempt.student_response,
             feedback=attempt.feedback,
             xp_awarded=attempt.xp_awarded,
             timestamp=attempt.attempted_at,
         )
-        for attempt, claim_title in rows
+        for attempt, claim_title, activity_type in rows
     ]

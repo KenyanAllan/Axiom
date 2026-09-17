@@ -31,7 +31,6 @@ import {
   createChatSession,
   deleteChatSession,
   WORKSPACE_KEY,
-  getWorkspaceId,
 } from "@/lib/api";
 import { XP_BY_TYPE } from "@/components/activity/ActivityFeed";
 
@@ -54,7 +53,12 @@ export default function Home() {
   const [pendingSourceDocId, setPendingSourceDocId] = useState<string | null>(null);
 
   // ── Workbench state (lifted from LeftSidebar) ────────────────────────────
-  const [activeWorkbenchId, setActiveWorkbenchId] = useState<number | null>(null);
+  const [activeWorkbenchId, setActiveWorkbenchId] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = localStorage.getItem(WORKSPACE_KEY);
+    const parsed = stored ? parseInt(stored, 10) : NaN;
+    return Number.isNaN(parsed) ? null : parsed;
+  });
 
   const handleWorkbenchChange = useCallback((id: number) => {
     setActiveWorkbenchId(id);
@@ -70,7 +74,7 @@ export default function Home() {
     if (user?.role === "teacher") {
       setActiveTab("dashboard");
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.role]);
 
   useEffect(() => {
     document.documentElement.style.fontSize = `${settings.fontScale * 100}%`;
@@ -85,11 +89,12 @@ export default function Home() {
   // ── Load chat sessions from API ─────────────────────────────────────────
   useEffect(() => {
     if (!user?.id || activeWorkbenchId == null) return;
+    let stale = false;
     setSessions([SEED_SESSION]);
     setActiveSessionId("seed");
     listChatSessions(user.id, activeWorkbenchId)
       .then(async (apiSessions) => {
-        if (apiSessions.length === 0) return;
+        if (stale || apiSessions.length === 0) return;
         const loaded: ChatSession[] = await Promise.all(
           apiSessions.slice(0, 10).map(async (s) => {
             try {
@@ -119,16 +124,18 @@ export default function Home() {
             }
           })
         );
-        if (loaded.length > 0) {
+        if (!stale && loaded.length > 0) {
           setSessions((prev) => [...prev, ...loaded]);
         }
       })
       .catch((err) => console.error("page.tsx: failed to load chat sessions:", err));
+    return () => { stale = true; };
   }, [user?.id, activeWorkbenchId]);
 
   // ── Load activity feed + queue from API ──────────────────────────────────
   useEffect(() => {
     if (!user?.id || activeWorkbenchId == null) return;
+    let stale = false;
     setActivities([]);
     const wsId = activeWorkbenchId;
     const loadFeed = fetchActivityFeed(user.id, wsId)
@@ -165,6 +172,7 @@ export default function Home() {
       .catch((err) => { console.error("page.tsx: failed to load activity queue:", err); return [] as Activity[]; });
 
     Promise.all([loadFeed, loadQueue]).then(([feedItems, queueItems]) => {
+      if (stale) return;
       const seen = new Set<string>();
       const merged: Activity[] = [];
       for (const item of [...queueItems, ...feedItems]) {
@@ -175,14 +183,17 @@ export default function Home() {
       }
       setActivities(merged);
     });
+    return () => { stale = true; };
   }, [user?.id, activeWorkbenchId]);
 
   // ── Load topics + claims for wiki ───────────────────────────────────────
   useEffect(() => {
     if (!user?.id || activeWorkbenchId == null) return;
+    let stale = false;
     setWikiPages([]);
     Promise.all([fetchTopics(user.id, activeWorkbenchId), fetchClaims(user.id, activeWorkbenchId)])
       .then(([topics, claims]) => {
+        if (stale) return;
         const pages: WikiPage[] = topics.map((t) => {
           const topicClaims = claims.filter((c) => c.topic_id === t.id);
           return {
@@ -190,6 +201,7 @@ export default function Home() {
             title: t.title,
             aliases: [t.slug],
             snippet: t.summary ?? "",
+            // TODO: use t.updated_at or t.created_at once TopicSummary includes a date field
             updated: "Sep 16",
             claims: topicClaims.map((c) => ({
               id: c.id,
@@ -203,6 +215,7 @@ export default function Home() {
         setWikiPages(pages);
       })
       .catch((err) => console.error("page.tsx: failed to load topics/claims for wiki:", err));
+    return () => { stale = true; };
   }, [user?.id, activeWorkbenchId]);
 
   const handleLogout = () => {
@@ -229,18 +242,20 @@ export default function Home() {
   }, []);
 
   const handleDeleteSession = useCallback((id: string) => {
-    const session = sessions.find((s) => s.id === id);
+    let backendId: number | undefined;
     setSessions((prev) => {
+      const target = prev.find((s) => s.id === id);
+      backendId = target?.backendId;
       const remaining = prev.filter((s) => s.id !== id);
       setActiveSessionId((prevId) =>
         prevId === id ? (remaining[0]?.id ?? null) : prevId
       );
       return remaining;
     });
-    if (session?.backendId && user?.id) {
-      deleteChatSession(user.id, session.backendId).catch((err) => console.error("page.tsx: failed to delete backend chat session:", err));
+    if (backendId && user?.id) {
+      deleteChatSession(user.id, backendId).catch((err) => console.error("page.tsx: failed to delete backend chat session:", err));
     }
-  }, [sessions, user?.id]);
+  }, [user?.id]);
 
   const handleCreateNewChat = useCallback(async () => {
     const localId = `new_chat_${Date.now()}`;
@@ -251,7 +266,7 @@ export default function Home() {
 
     if (user?.id) {
       try {
-        const backendSession = await createChatSession(user.id);
+        const backendSession = await createChatSession(user.id, undefined, activeWorkbenchId ?? undefined);
         setSessions((prev) =>
           prev.map((s) => (s.id === localId ? { ...s, backendId: backendSession.id } : s))
         );
@@ -259,7 +274,7 @@ export default function Home() {
         console.error("page.tsx: failed to create backend chat session:", err);
       }
     }
-  }, [user?.id]);
+  }, [user?.id, activeWorkbenchId]);
 
   const effectiveRole = studentView && user?.role === "teacher" ? "student" as const : user?.role ?? "student" as const;
 
@@ -350,6 +365,7 @@ export default function Home() {
           onViewSource={handleViewSource}
           pendingSourceDocId={pendingSourceDocId}
           onPendingSourceDocHandled={() => setPendingSourceDocId(null)}
+          activeWorkbenchId={activeWorkbenchId}
         />
         <RightSidebar
           user={user}
@@ -357,6 +373,7 @@ export default function Home() {
           userRole={effectiveRole}
           onTabChange={setActiveTab}
           onReviewActivity={handleReviewActivity}
+          activeWorkbenchId={activeWorkbenchId}
         />
 
       {/* Fullscreen activity overlay */}

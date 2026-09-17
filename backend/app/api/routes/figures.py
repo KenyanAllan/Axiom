@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -146,7 +146,7 @@ async def delete_figure(
     figure_id: int,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-):
+) -> Response:
     user = await db.get(User, user_id)
     if user is None or user.role == "student":
         raise HTTPException(status_code=403, detail="Students cannot delete figures")
@@ -164,4 +164,4 @@ async def delete_figure(
     await db.delete(figure)
     await db.flush()
     logger.info("Figure deleted: id=%s", figure_id)
-    return None
+    return Response(status_code=204)

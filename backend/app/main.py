@@ -25,7 +25,6 @@ app = FastAPI(
     title="Axiom API",
     description="Axiom — technical learning workspace backend API",
     version="0.1.0",
-    redirect_slashes=False,
 )
 
 app.state.limiter = limiter

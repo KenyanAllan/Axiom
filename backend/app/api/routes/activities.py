@@ -7,14 +7,13 @@ import logging
 import asyncio
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import case, func, select
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy import String, case, cast, func, or_, select, true as sa_true
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import resolve_topic
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from pydantic import BaseModel, Field
-
 from app.models.tables import Activity, AtomicClaim, Classroom, Topic, TopicPrerequisite, User, UserMastery
 from app.schemas.activities import (
     ActivityCreate,
@@ -29,6 +28,7 @@ from app.schemas.activities import (
     EvaluateResult,
     GenerateDeckRequest,
     GenerateQuizRequest,
+    GenerateRequest,
     QueueResponse,
     QuizOverviewResponse,
     QuizQuestionResponse,
@@ -46,12 +46,6 @@ from app.services.queue import get_user_queue, add_to_queue
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/activities", tags=["activities"])
-
-
-class GenerateRequest(BaseModel):
-    claim_id: str
-    workspace_id: int
-    types: list[str] = Field(default=["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof", "parsons"])
 
 
 # ── POST /api/activities/evaluate ────────────────────────────────────────────
@@ -105,7 +99,7 @@ async def evaluate(
 @router.get("/feed", response_model=ActivityFeedResponse)
 async def activity_feed(
     workspace_id: int | None = None,
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=100),
     offset: int = 0,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -291,7 +285,7 @@ async def submit_attempt(
         )
     except ValueError as exc:
         logger.warning("Submit attempt failed: %s", exc)
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc))
 
     return AttemptResult(
         attempt_id=result["attempt_id"],
@@ -314,7 +308,7 @@ async def submit_attempt(
 @router.get("/queue", response_model=QueueResponse)
 async def get_queue(
     workspace_id: int | None = None,
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=100),
     offset: int = 0,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -508,10 +502,7 @@ async def flashcard_stack(
     Gets all flashcard activities targeting claims in this topic.
     If fewer than 5, pulls from neighboring prerequisite/dependent topics.
     """
-    topic = await db.get(Topic, topic_id)
-    if topic is None:
-        result = await db.execute(select(Topic).where(Topic.slug == topic_id))
-        topic = result.scalar_one_or_none()
+    topic = await resolve_topic(db, topic_id)
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
 
@@ -523,10 +514,11 @@ async def flashcard_stack(
 
     flashcards: list[Activity] = []
     if claim_ids:
+        json_text = cast(Activity.target_claim_ids, String)
         fc_result = await db.execute(
             select(Activity).where(
                 Activity.type == "flashcard",
-                Activity.target_claim_ids.op("?|")(claim_ids),
+                or_(*[json_text.like(f'%"{cid}"%') for cid in claim_ids]),
             )
         )
         flashcards = list(fc_result.scalars().all())
@@ -557,11 +549,21 @@ async def flashcard_stack(
 
             if neighbor_claim_ids:
                 existing_ids = {f.id for f in flashcards}
+                neighbor_json_text = cast(Activity.target_claim_ids, String)
+                claim_filter = or_(*[
+                    neighbor_json_text.like(f'%"{cid}"%')
+                    for cid in neighbor_claim_ids
+                ])
+                exclusion_filter = (
+                    Activity.id.notin_(existing_ids)
+                    if existing_ids
+                    else sa_true()
+                )
                 extra_result = await db.execute(
                     select(Activity).where(
                         Activity.type == "flashcard",
-                        Activity.target_claim_ids.op("?|")(neighbor_claim_ids),
-                        Activity.id.notin_(existing_ids) if existing_ids else True,
+                        claim_filter,
+                        exclusion_filter,
                     )
                 )
                 extra = list(extra_result.scalars().all())

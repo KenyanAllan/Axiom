@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import resolve_topic
 from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
@@ -65,11 +66,25 @@ async def synthesize(
 
     output_key = f"audio/{uuid4().hex}.mp3"
 
-    result = await asyncio.to_thread(synthesize_speech, text, output_key)
+    try:
+        result = await asyncio.to_thread(synthesize_speech, text, output_key)
+    except Exception as exc:
+        logger.error("Polly synthesize_speech failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="The text-to-speech service is temporarily unavailable. Please try again later.",
+        )
 
-    audio_url = await asyncio.to_thread(
-        _generate_polly_download_url, result["s3_key"]
-    )
+    try:
+        audio_url = await asyncio.to_thread(
+            _generate_polly_download_url, result["s3_key"]
+        )
+    except Exception as exc:
+        logger.error("S3 presigned URL generation failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to generate audio download URL. Please try again later.",
+        )
 
     return SynthesizeResponse(
         audio_url=audio_url,
@@ -97,7 +112,14 @@ async def speech_marks(
 
     text = await _resolve_text(body, db)
 
-    marks = await asyncio.to_thread(generate_speech_marks, text)
+    try:
+        marks = await asyncio.to_thread(generate_speech_marks, text)
+    except Exception as exc:
+        logger.error("Polly generate_speech_marks failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="The speech marks service is temporarily unavailable. Please try again later.",
+        )
 
     return SpeechMarksResponse(marks=marks, text_length=len(text))
 
@@ -147,6 +169,12 @@ async def generate_overview(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Audio overview generation failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="The audio overview service is temporarily unavailable. Please try again later.",
+        )
 
     await db.commit()
 
@@ -183,7 +211,7 @@ async def _resolve_text(body: SynthesizeRequest, db: AsyncSession) -> str:
         return " ".join(parts)
 
     if body.topic_id:
-        topic = await db.get(Topic, body.topic_id)
+        topic = await resolve_topic(db, body.topic_id)
         if topic is None:
             raise HTTPException(status_code=404, detail=f"Topic '{body.topic_id}' not found")
 

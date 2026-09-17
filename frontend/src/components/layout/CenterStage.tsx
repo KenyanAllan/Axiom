@@ -97,6 +97,7 @@ interface CenterStageProps {
   onViewSource?: (sourceDocumentId: string) => void;
   pendingSourceDocId?: string | null;
   onPendingSourceDocHandled?: () => void;
+  activeWorkbenchId?: number | null;
 }
 
 interface ChatContextItem {
@@ -566,6 +567,7 @@ export function CenterStage({
   onViewSource,
   pendingSourceDocId,
   onPendingSourceDocHandled,
+  activeWorkbenchId,
 }: CenterStageProps) {
   const isTeacher = userRole === "teacher";
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
@@ -587,15 +589,19 @@ export function CenterStage({
 
   // ── Load graph data from API ───────────────────────────────────────────────
   useEffect(() => {
-    if (!userId) return;
-    fetchGraph(userId)
+    if (!userId || activeWorkbenchId == null) return;
+    let stale = false;
+    setGraphNodes([]);
+    fetchGraph(userId, activeWorkbenchId)
       .then((data) => {
+        if (stale) return;
         if (data.topics.length > 0) {
           setGraphNodes(computeNodeLayout(data.topics, data.edges));
         }
       })
       .catch((err) => console.error("CenterStage: failed to fetch graph data:", err));
-  }, [userId]);
+    return () => { stale = true; };
+  }, [userId, activeWorkbenchId]);
 
   const addClaimContext = useCallback((claim: WikiClaim, pageTitle: string) => {
     setChatContext((prev) => {

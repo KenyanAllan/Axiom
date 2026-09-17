@@ -48,7 +48,11 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
   const loadWorkbenches = useCallback(() => {
     listWorkbenches(user.id)
       .then((ws) => {
-        setWorkbenches(ws);
+        setWorkbenches((prev) => {
+          const serverIds = new Set(ws.map((w) => w.id));
+          const optimistic = prev.filter((w) => !serverIds.has(w.id));
+          return [...ws, ...optimistic];
+        });
         if (ws.length > 0 && activeIdRef.current == null) {
           onWorkbenchChangeRef.current?.(ws[0].id);
         }

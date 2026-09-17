@@ -16,7 +16,8 @@ import time
 from typing import Any
 
 import boto3
-from tenacity import retry, stop_after_attempt, wait_exponential
+from botocore.exceptions import ClientError
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
 
@@ -351,7 +352,16 @@ Return ONLY the JSON object. No markdown fences.
 """
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+def _is_retryable(exc: BaseException) -> bool:
+    """Return False for non-retryable AWS errors to avoid wasting retry budget."""
+    if isinstance(exc, ClientError):
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("AccessDeniedException", "ValidationException", "ResourceNotFoundException"):
+            return False
+    return True
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), retry=retry_if_exception(_is_retryable))
 def _call_bedrock_extract(chunk_text: str) -> dict[str, Any] | None:
     """Call Bedrock Claude to extract topic + claims from a chunk."""
     kwargs: dict[str, Any] = {"region_name": settings.aws_default_region}
@@ -382,7 +392,7 @@ def _call_bedrock_extract(chunk_text: str) -> dict[str, Any] | None:
         return None
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), retry=retry_if_exception(_is_retryable))
 def _call_bedrock_embed(text: str) -> list[float]:
     """Generate a 1024-dim embedding using Titan Embeddings v2."""
     kwargs: dict[str, Any] = {"region_name": settings.aws_default_region}
@@ -401,7 +411,7 @@ def _call_bedrock_embed(text: str) -> list[float]:
     return result["embedding"]
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), retry=retry_if_exception(_is_retryable))
 def _call_bedrock_extract_glossary(chunk_text: str) -> list[dict[str, str]]:
     """Call Bedrock Claude to extract glossary terms from a chunk."""
     kwargs: dict[str, Any] = {"region_name": settings.aws_default_region}
@@ -983,9 +993,9 @@ def ingest_source_document(
                 logger.warning("Complexity scoring failed for chunk %d: %s", chunk["index"], exc)
 
             # 4d. Insert claims
-            for claim_data in claims_data:
+            for claim_idx, claim_data in enumerate(claims_data):
                 chunk_idx = chunk["index"]
-                id_suffix = claim_data.get("id_suffix", f"chunk{chunk_idx}_{len(claims_data)}")
+                id_suffix = claim_data.get("id_suffix", f"chunk{chunk_idx}_{claim_idx}")
                 claim_id = f"claim_{id_suffix}"
 
                 # Check for existing claim (dedup)

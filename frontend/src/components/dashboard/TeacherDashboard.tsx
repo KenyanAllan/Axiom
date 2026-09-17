@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect } from "react";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import {
   Users,
   TrendingUp,
@@ -576,7 +576,7 @@ export function TeacherDashboard({ userId, onReviewActivity }: TeacherDashboardP
     }
   };
 
-  const sorted = [...students].sort((a, b) => {
+  const sorted = useMemo(() => [...students].sort((a, b) => {
     let cmp = 0;
     switch (sortKey) {
       case "name":
@@ -586,7 +586,7 @@ export function TeacherDashboard({ userId, onReviewActivity }: TeacherDashboardP
         cmp = a.xp - b.xp;
         break;
       case "mastery":
-        cmp = a.claimsMastered / a.claimsTotal - b.claimsMastered / b.claimsTotal;
+        cmp = (a.claimsMastered / (a.claimsTotal || 1)) - (b.claimsMastered / (b.claimsTotal || 1));
         break;
       case "lastActive":
         cmp = new Date(a.lastActive).getTime() - new Date(b.lastActive).getTime();
@@ -596,7 +596,7 @@ export function TeacherDashboard({ userId, onReviewActivity }: TeacherDashboardP
         break;
     }
     return sortAsc ? cmp : -cmp;
-  });
+  }), [students, sortKey, sortAsc]);
 
   // Aggregate stats
   const totalStudents = students.length;
@@ -903,6 +903,12 @@ function ActivityHistoryRow({
     mini_podcast: "Mini Podcast",
     flashcard_deck: "Flashcard Deck",
     parsons: "Parsons",
+    visual_sketch: "Sketch",
+    visual_label: "Label Diagram",
+    visual_proof: "Write & Photograph",
+    figure_flashcard: "Figure Flashcard",
+    figure_label: "Label Figure",
+    figure_explain: "Explain Figure",
   };
 
   const typeColors: Record<string, string> = {
@@ -913,6 +919,17 @@ function ActivityHistoryRow({
     true_false: "bg-cyan-100 text-cyan-700",
     myth_buster: "bg-rose-100 text-rose-700",
     parsons: "bg-pink-100 text-pink-700",
+    fill_blank: "bg-blue-100 text-blue-700",
+    short_answer: "bg-indigo-100 text-indigo-700",
+    multi_choice: "bg-green-100 text-green-700",
+    mini_podcast: "bg-teal-100 text-teal-700",
+    flashcard_deck: "bg-sky-100 text-sky-700",
+    visual_sketch: "bg-indigo-100 text-indigo-700",
+    visual_label: "bg-cyan-100 text-cyan-700",
+    visual_proof: "bg-orange-100 text-orange-700",
+    figure_flashcard: "bg-emerald-100 text-emerald-700",
+    figure_label: "bg-teal-100 text-teal-700",
+    figure_explain: "bg-violet-100 text-violet-700",
   };
 
   const hasDetail = item.student_response || item.feedback;
@@ -1043,6 +1060,12 @@ function OutcomeBadge({
         <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">
           <Clock className="h-3 w-3" />
           Partial
+        </span>
+      );
+    default:
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+          {outcome}
         </span>
       );
   }

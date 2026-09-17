@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import ARRAY, String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -230,7 +230,7 @@ async def auto_populate_queue(
     existing_activities = await db.execute(
         select(Activity).where(
             Activity.workspace_id == workspace_id,
-            Activity.target_claim_ids.op("?|")(target_claim_ids),
+            Activity.target_claim_ids.op("?|")(cast(target_claim_ids, ARRAY(String))),
         )
     )
 

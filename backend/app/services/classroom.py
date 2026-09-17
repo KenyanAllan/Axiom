@@ -135,12 +135,17 @@ async def join_classroom(
         )
     ).scalars().all()
 
-    for activity in shared_activities:
-        queue_entry = UserActivityQueue(
-            user_id=student_id,
-            activity_id=activity.id,
+    if shared_activities:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        values = [
+            {"user_id": student_id, "activity_id": activity.id}
+            for activity in shared_activities
+        ]
+        stmt = pg_insert(UserActivityQueue).values(values).on_conflict_do_nothing(
+            constraint="uq_user_activity"
         )
-        db.add(queue_entry)
+        await db.execute(stmt)
 
     await db.flush()
 

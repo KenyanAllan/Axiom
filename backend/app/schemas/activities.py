@@ -39,6 +39,25 @@ Outcome = Literal["understood", "did_not_understand", "neutral"]
 # ── Request schemas ─────────────────────────────────────────────────────────────
 
 
+class GenerateRequest(BaseModel):
+    claim_id: str
+    workspace_id: int
+    types: list[ActivityType] = Field(
+        default=[
+            "flashcard",
+            "true_false",
+            "multi_choice",
+            "fill_blank",
+            "wrong_on_purpose",
+            "feynman",
+            "visual_sketch",
+            "visual_label",
+            "visual_proof",
+            "parsons",
+        ]
+    )
+
+
 class EvaluateRequest(BaseModel):
     claim_id: str = Field(..., examples=["claim_ge_01"])
     student_response: str = Field(
@@ -53,7 +72,7 @@ class ActivityCreate(BaseModel):
     type: ActivityType
     title: str = Field(..., min_length=1)
     difficulty: int = Field(..., ge=1, le=3)
-    target_claim_ids: list[str]
+    target_claim_ids: list[str] = Field(min_length=1)
     scope: ActivityScope = "STUDENT_PERSONAL"
     workspace_id: int | None = None
     classroom_id: int | None = None
@@ -65,6 +84,8 @@ class AttemptCreate(BaseModel):
     activity_id: int
     claim_id: str | None = None
     hints_used: bool = False
+    # Empty string is allowed: visual-only submissions (visual_sketch, visual_label,
+    # visual_proof) may carry only an image via response_image_s3_key.
     student_response: str = Field(
         default="",
         max_length=10_000,
@@ -99,7 +120,6 @@ class ActivityResponse(BaseModel):
     scope: ActivityScope
     target_claim_ids: list[str]
     payload: dict
-    is_completed: bool = False
     audit_passed: bool | None = None
     created_at: datetime
     creator_id: str
@@ -233,6 +253,7 @@ class HistoryEvent(BaseModel):
     claim_title: str
     is_correct: bool
     outcome: str
+    activity_type: str | None = None
     student_response: str | None = None
     feedback: str | None = None
     xp_awarded: int

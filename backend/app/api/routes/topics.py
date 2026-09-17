@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import resolve_topic, verify_workspace_access, get_user_workspace_ids
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models.tables import AtomicClaim, Topic, TopicPrerequisite, UserMastery
@@ -57,12 +58,7 @@ def _slugify(title: str) -> str:
     return slug
 
 
-async def _resolve_topic(db: AsyncSession, id_or_slug: str) -> Topic | None:
-    topic = await db.get(Topic, id_or_slug)
-    if topic is not None:
-        return topic
-    result = await db.execute(select(Topic).where(Topic.slug == id_or_slug))
-    return result.scalar_one_or_none()
+_resolve_topic = resolve_topic
 
 
 async def would_create_cycle(
@@ -110,6 +106,7 @@ async def list_topics(
     db: AsyncSession = Depends(get_db),
 ) -> list[TopicSummary]:
     """List all topics in a workspace."""
+    await verify_workspace_access(db, workspace_id, user_id)
     stmt = (
         select(Topic)
         .where(Topic.workspace_id == workspace_id)
@@ -138,6 +135,9 @@ async def get_topic(
     if topic is None:
         logger.warning("Topic not found: slug=%s", slug)
         raise HTTPException(status_code=404, detail=f"Topic '{slug}' not found")
+
+    if topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
 
     # Claims
     claims = [
@@ -241,10 +241,17 @@ async def get_frontier(
     """
     params: dict = {"user_id": user_id}
     if workspace_id is not None:
+        await verify_workspace_access(db, workspace_id, user_id)
         ws_filter = "WHERE t.workspace_id = :workspace_id"
         params["workspace_id"] = workspace_id
     else:
-        ws_filter = ""
+        # Scope to user's accessible workspaces
+        user_ws_ids = await get_user_workspace_ids(db, user_id)
+        if user_ws_ids:
+            ws_filter = "WHERE t.workspace_id IN :workspace_ids"
+            params["workspace_ids"] = tuple(user_ws_ids)
+        else:
+            ws_filter = "WHERE 1=0"  # no accessible workspaces
     sql = text(_FRONTIER_CTE_TEMPLATE.format(workspace_filter=ws_filter))
     rows = (await db.execute(sql, params)).all()
 
@@ -273,12 +280,15 @@ async def create_topic(
     db: AsyncSession = Depends(get_db),
 ) -> TopicSummary:
     """Create a new topic with optional prerequisite edges."""
+    await verify_workspace_access(db, body.workspace_id, user_id)
     slug = _slugify(body.title)
+    if not slug:
+        raise HTTPException(status_code=400, detail="Title must contain at least one alphanumeric character")
     topic_id = f"top_{slug}"
 
-    # Check slug uniqueness
+    # Check slug and PK uniqueness
     existing = (
-        await db.execute(select(Topic).where(Topic.slug == slug))
+        await db.execute(select(Topic).where((Topic.slug == slug) | (Topic.id == topic_id)))
     ).scalar_one_or_none()
     if existing is not None:
         logger.warning("Duplicate topic slug: slug=%s", slug)
@@ -294,19 +304,19 @@ async def create_topic(
     db.add(topic)
     await db.flush()
 
-    # Add prerequisite edges with cycle detection
+    # Add prerequisite edges (deduplicated, with self-loop guard)
+    seen_prereq_ids: set[str] = set()
     for prereq_id in body.prerequisite_ids:
-        prereq = await db.get(Topic, prereq_id)
+        prereq = await _resolve_topic(db, prereq_id)
         if prereq is None:
             logger.warning("Prerequisite not found: prereq_id=%s", prereq_id)
             raise HTTPException(status_code=404, detail=f"Prerequisite topic '{prereq_id}' not found")
-        if await would_create_cycle(db, topic_id, prereq_id):
-            logger.warning("Cycle detected: topic_id=%s, prereq_id=%s", topic_id, prereq_id)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Adding prerequisite '{prereq_id}' would create a cycle",
-            )
-        db.add(TopicPrerequisite(topic_id=topic_id, prerequisite_id=prereq_id))
+        if prereq.id == topic_id:
+            raise HTTPException(status_code=400, detail=f"A topic cannot be its own prerequisite")
+        if prereq.id in seen_prereq_ids:
+            continue
+        seen_prereq_ids.add(prereq.id)
+        db.add(TopicPrerequisite(topic_id=topic_id, prerequisite_id=prereq.id))
 
     await db.flush()
     logger.info("Created topic: topic_id=%s, title=%s", topic.id, topic.title)
@@ -328,6 +338,9 @@ async def update_topic(
     if topic is None:
         logger.warning("Topic not found for update: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
+
+    if topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
 
     if body.title is not None:
         topic.title = body.title
@@ -353,6 +366,9 @@ async def delete_topic(
         logger.warning("Topic not found for deletion: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
 
+    if topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
+
     await db.delete(topic)
     await db.flush()
     return Response(status_code=204)
@@ -373,6 +389,9 @@ async def add_prerequisite(
     if topic is None:
         logger.warning("Topic not found for prerequisite add: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
+
+    if topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
 
     prereq = await _resolve_topic(db, body.prerequisite_id)
     if prereq is None:
@@ -418,6 +437,10 @@ async def remove_prerequisite(
     topic = await _resolve_topic(db, topic_id)
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
+
+    if topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
+
     prereq = await _resolve_topic(db, prerequisite_id)
     resolved_prereq_id = prereq.id if prereq else prerequisite_id
     result = await db.execute(

@@ -28,6 +28,7 @@ Parameters:
   JWTSecretKey:
     Type: String
     Default: 'CHANGE-ME-to-a-random-64-char-string-for-axiom-production'
+    NoEcho: true
     Description: Random 64-character JWT secret key.
 
   CORSOrigins:

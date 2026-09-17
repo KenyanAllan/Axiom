@@ -7,7 +7,7 @@ from datetime import datetime
 
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -352,7 +352,7 @@ async def delete_source(
     source_id: int,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-):
+) -> Response:
     """Delete a source document, its S3 object, and nullify linked claims.
 
     Only teachers and individual learners can delete source documents.
@@ -388,4 +388,4 @@ async def delete_source(
     await db.flush()
 
     logger.info("Deleted source document id=%s", source_id)
-    return None
+    return Response(status_code=204)

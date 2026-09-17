@@ -104,40 +104,69 @@ def _synthesize_short_text(
         raise
 
 
+def _chunk_text_for_polly(text: str, max_chars: int = 2900) -> list[str]:
+    """Split text into chunks under max_chars, breaking at sentence boundaries."""
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= max_chars:
+            chunks.append(remaining)
+            break
+        # Find a sentence boundary within the limit
+        split_pos = remaining.rfind(". ", 0, max_chars)
+        if split_pos == -1:
+            split_pos = remaining.rfind(" ", 0, max_chars)
+        if split_pos == -1:
+            split_pos = max_chars
+        else:
+            split_pos += 1  # Include the period/space
+        chunks.append(remaining[:split_pos])
+        remaining = remaining[split_pos:].lstrip()
+    return chunks
+
+
 def _synthesize_long_text(
     polly: Any, text: str, output_key: str
 ) -> dict[str, Any]:
-    """Async synthesis task for long text — Polly writes directly to S3."""
+    """Synchronous chunked synthesis for long text — avoids async task 404s."""
     try:
-        # For the async task, Polly writes output to S3 directly.
-        # The output_key prefix determines the S3 path.
-        response = polly.start_speech_synthesis_task(
-            Text=text,
-            OutputFormat="mp3",
-            OutputS3BucketName=settings.polly_output_bucket,
-            OutputS3KeyPrefix=output_key.rsplit(".", 1)[0],  # Remove .mp3 extension
-            VoiceId=settings.polly_voice_id,
-            Engine=settings.polly_engine,
+        chunks = _chunk_text_for_polly(text)
+        audio_parts: list[bytes] = []
+
+        for i, chunk in enumerate(chunks):
+            response = polly.synthesize_speech(
+                Text=chunk,
+                OutputFormat="mp3",
+                VoiceId=settings.polly_voice_id,
+                Engine=settings.polly_engine,
+            )
+            audio_parts.append(response["AudioStream"].read())
+            logger.debug("Synthesized chunk %d/%d (%d chars)", i + 1, len(chunks), len(chunk))
+
+        audio_data = b"".join(audio_parts)
+
+        # Upload concatenated audio to S3
+        s3 = _get_s3_client()
+        s3.put_object(
+            Bucket=settings.polly_output_bucket,
+            Key=output_key,
+            Body=audio_data,
+            ContentType="audio/mpeg",
         )
 
-        task = response["SynthesisTask"]
-        task_id = task["TaskId"]
-        # Polly generates the actual S3 key with the task ID appended
-        actual_s3_key = task.get("OutputUri", "").replace(
-            f"s3://{settings.polly_output_bucket}/", ""
-        )
+        duration_seconds = len(audio_data) / (128 * 1000 / 8) if audio_data else None
 
         logger.info(
-            "Started long-text synthesis task %s (%d chars) -> s3://%s/%s",
-            task_id,
+            "Synthesized long text (%d chars, %d chunks) -> s3://%s/%s",
             len(text),
+            len(chunks),
             settings.polly_output_bucket,
-            actual_s3_key or output_key,
+            output_key,
         )
 
         return {
-            "s3_key": actual_s3_key or output_key,
-            "duration_seconds": None,  # Not available until task completes
+            "s3_key": output_key,
+            "duration_seconds": round(duration_seconds, 2) if duration_seconds else None,
         }
     except Exception as exc:
         logger.error("Polly long-text synthesis failed: %s", exc)

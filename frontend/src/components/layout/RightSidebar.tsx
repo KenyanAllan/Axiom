@@ -26,6 +26,7 @@ interface RightSidebarProps {
   userRole?: UserProfile["role"];
   onTabChange?: (tab: ViewTab) => void;
   onReviewActivity?: (review: CompletedActivityReview) => void;
+  activeWorkbenchId?: number | null;
 }
 
 const LEADERBOARD = [
@@ -240,7 +241,7 @@ function historyToTimeline(events: HistoryEvent[]): TimelineEntry[] {
     xp: e.xp_awarded,
     time: relativeTime(e.timestamp),
     activityId: e.claim_id,
-    activityType: mapBackendType((e as HistoryEvent & { activity_type?: string }).activity_type ?? ""),
+    activityType: mapBackendType(e.activity_type ?? ""),
     studentResponse: e.student_response,
     feedback: e.feedback,
     outcome: e.outcome,
@@ -265,7 +266,7 @@ function timelineEntryToReview(entry: TimelineEntry, isTeacher: boolean): Comple
   };
 }
 
-export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onReviewActivity }: RightSidebarProps) {
+export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onReviewActivity, activeWorkbenchId }: RightSidebarProps) {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   // ── Real data state (falls back to hardcoded) ──────────────────────────────
@@ -275,6 +276,10 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
   >(null);
   const [activityTimeline, setActivityTimeline] = useState<TimelineEntry[] | null>(null);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    setExpandedIndex(null);
+  }, [activityTimeline]);
 
   const toggleExpand = useCallback((i: number) => {
     setExpandedIndex((prev) => (prev === i ? null : i));
@@ -327,11 +332,12 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
         if (cancelled || classrooms.length === 0) return;
         const classroom = classrooms[0];
 
+        const wsId = activeWorkbenchId ?? undefined;
         const [leaderboard, diagnostic, topics, claims] = await Promise.all([
           fetchClassroomLeaderboard(user.id, classroom.id).catch((err) => { console.error("RightSidebar: failed to fetch leaderboard:", err); return null; }),
           fetchClassroomDiagnostic(user.id, classroom.id).catch((err) => { console.error("RightSidebar: failed to fetch diagnostic:", err); return null; }),
-          fetchTopics(user.id).catch((err) => { console.error("RightSidebar: failed to fetch topics:", err); return null; }),
-          fetchClaims(user.id).catch((err) => { console.error("RightSidebar: failed to fetch claims:", err); return null; }),
+          fetchTopics(user.id, wsId).catch((err) => { console.error("RightSidebar: failed to fetch topics:", err); return null; }),
+          fetchClaims(user.id, wsId).catch((err) => { console.error("RightSidebar: failed to fetch claims:", err); return null; }),
         ]);
         if (cancelled) return;
 
@@ -348,7 +354,7 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
 
     loadTeacher();
     return () => { cancelled = true; };
-  }, [user.id, isTeacher]);
+  }, [user.id, isTeacher, activeWorkbenchId]);
 
   // Prefer live profile, fall back to prop
   const displayUser = liveProfile ?? user;
@@ -516,9 +522,6 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
           <div className="mt-3 flex items-center gap-2 text-xs">
             <Flame className="h-3.5 w-3.5 text-orange-400" />
             <span className="font-medium">{displayUser.streak_days ?? 0}-day streak</span>
-            <span className="ml-auto font-mono text-muted-foreground">
-              Top 4%
-            </span>
           </div>
         </div>
       )}
@@ -571,7 +574,7 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
             const hasDetail = a.studentResponse || a.feedback;
             const isExpanded = expandedIndex === i;
             return (
-              <div key={i}>
+              <div key={`${a.activityId}-${a.time}`}>
                 <button
                   onClick={() => {
                     if (hasDetail && onReviewActivity) {

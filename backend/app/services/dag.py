@@ -116,7 +116,7 @@ async def topological_sort(
     topics_result = await db.execute(
         select(Topic)
         .where(Topic.workspace_id == workspace_id)
-        .options(selectinload(Topic.claims))
+        .options(selectinload(Topic.claims), selectinload(Topic.prerequisites))
     )
     topics = list(topics_result.scalars().all())
     if not topics:

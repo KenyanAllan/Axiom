@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user
 from app.core.config import get_settings
-from app.core.database import get_db
+from app.core.database import async_session_factory, get_db
 from app.core.rate_limit import limiter
 from app.models.tables import (
     AtomicClaim,
@@ -291,7 +291,10 @@ async def _rag_converse_with_tools(
                 final_text_parts.append(block["text"])
 
     if not final_text_parts:
-        final_text_parts = ["I've completed the requested actions."]
+        final_text_parts = [
+            "I wasn't able to complete all the requested actions within "
+            "the allowed number of steps. Here's what I found so far:"
+        ]
 
     return {
         "content": "\n".join(final_text_parts),
@@ -320,6 +323,31 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
 ) -> ChatSessionResponse:
     """Create a new chat session for a workspace."""
+    # Verify workspace access
+    ws_result = await db.execute(
+        select(Workspace).where(Workspace.id == body.workspace_id)
+    )
+    workspace = ws_result.scalar_one_or_none()
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    if workspace.user_id != user_id:
+        if workspace.classroom_id is not None:
+            from app.models.tables import Classroom, ClassroomStudent
+            classroom = await db.get(Classroom, workspace.classroom_id)
+            is_teacher = classroom and classroom.teacher_id == user_id
+            enrolled = None
+            if not is_teacher:
+                enrolled = (await db.execute(
+                    select(ClassroomStudent).where(
+                        ClassroomStudent.classroom_id == workspace.classroom_id,
+                        ClassroomStudent.student_id == user_id,
+                    )
+                )).scalar_one_or_none()
+            if not is_teacher and enrolled is None:
+                raise HTTPException(status_code=403, detail="Not your workspace")
+        else:
+            raise HTTPException(status_code=403, detail="Not your workspace")
+
     session = ChatSession(
         user_id=user_id,
         workspace_id=body.workspace_id,
@@ -547,6 +575,13 @@ async def send_message(
     # 4a. Build multimodal image blocks if images attached
     image_blocks: list[dict] | None = None
     if body.image_s3_keys:
+        for s3_key in body.image_s3_keys:
+            if not s3_key.startswith("chat-images/"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid image key: must start with 'chat-images/'",
+                )
+
         from app.services.s3 import download_bytes
 
         image_blocks = []
@@ -575,17 +610,32 @@ async def send_message(
 
     import time as _time
     _bedrock_start = _time.monotonic()
-    rag_result = await _rag_converse_with_tools(
-        context=context_str,
-        user_message=body.content,
-        db=db,
-        user_id=user_id,
-        workspace_id=chat_session.workspace_id,
-        user_role=user_role,
-        classroom_id=classroom_id,
-        conversation_history=conversation_history,
-        image_blocks=image_blocks,
-    )
+    try:
+        rag_result = await _rag_converse_with_tools(
+            context=context_str,
+            user_message=body.content,
+            db=db,
+            user_id=user_id,
+            workspace_id=chat_session.workspace_id,
+            user_role=user_role,
+            classroom_id=classroom_id,
+            conversation_history=conversation_history,
+            image_blocks=image_blocks,
+        )
+    except Exception as exc:
+        logger.error("Bedrock converse failed for session_id=%s: %s", session_id, exc, exc_info=True)
+        # Save a fallback assistant message to keep conversation consistent
+        fallback_msg = ChatMessage(
+            session_id=session_id,
+            role="assistant",
+            content="I'm sorry, I encountered an error processing your request. Please try again.",
+        )
+        db.add(fallback_msg)
+        await db.flush()
+        raise HTTPException(
+            status_code=502,
+            detail="The AI service is temporarily unavailable. Please try again.",
+        )
     _bedrock_elapsed = _time.monotonic() - _bedrock_start
     logger.info("Bedrock converse completed in %.2fs for session_id=%s", _bedrock_elapsed, session_id)
 
@@ -647,7 +697,7 @@ async def _iterate_bedrock_stream(bedrock_response: dict):
     import threading
 
     queue: asyncio.Queue = asyncio.Queue()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     stream = bedrock_response["stream"]
 
     def _producer():
@@ -769,6 +819,7 @@ async def _stream_rag_converse_with_tools(
                     )
 
                     tool_call_entry: dict[str, Any] = {
+                        "toolUseId": current_tool_use_id,
                         "tool": current_tool_name,
                         "input": tool_input,
                         "output_summary": _summarize_result(result),
@@ -807,7 +858,7 @@ async def _stream_rag_converse_with_tools(
         for block in accumulated_content_blocks:
             if "toolUse" in block:
                 tu = block["toolUse"]
-                matching = [tc for tc in tool_calls_made if tc["tool"] == tu["name"]]
+                matching = [tc for tc in tool_calls_made if tc.get("toolUseId") == tu["toolUseId"]]
                 result_data = matching[-1] if matching else {"output_summary": "ok"}
                 tool_results.append({
                     "toolResult": {
@@ -911,6 +962,13 @@ async def send_message_stream(
 
     image_blocks: list[dict] | None = None
     if body.image_s3_keys:
+        for s3_key in body.image_s3_keys:
+            if not s3_key.startswith("chat-images/"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid image key: must start with 'chat-images/'",
+                )
+
         from app.services.s3 import download_bytes
 
         image_blocks = []
@@ -931,17 +989,26 @@ async def send_message_stream(
         if not image_blocks:
             image_blocks = None
 
+    # Capture values needed inside the generator so it does not depend
+    # on the request-scoped DB session (which closes when the endpoint returns).
+    _user_lang = user.preferred_language if user else "en"
+    _workspace_id = chat_session.workspace_id
+
     async def event_generator():
         full_text_parts: list[str] = []
         all_tool_calls: list[dict] = []
 
+        # Create an independent DB session for the generator's lifetime.
+        # The request-scoped session (`db`) may close before this generator
+        # finishes yielding events.
+        gen_db = async_session_factory()
         try:
             async for sse_event in _stream_rag_converse_with_tools(
                 context=context_str,
                 user_message=body.content,
-                db=db,
+                db=gen_db,
                 user_id=user_id,
-                workspace_id=chat_session.workspace_id,
+                workspace_id=_workspace_id,
                 user_role=user_role,
                 classroom_id=classroom_id,
                 conversation_history=conversation_history,
@@ -972,15 +1039,17 @@ async def send_message_stream(
 
             full_content = "".join(full_text_parts)
             if not full_content:
-                full_content = "I've completed the requested actions."
+                full_content = (
+                    "I wasn't able to complete all the requested actions within "
+                    "the allowed number of steps. Here's what I found so far."
+                )
 
-            user_lang = user.preferred_language if user else "en"
-            if user_lang and user_lang != "en":
+            if _user_lang and _user_lang != "en":
                 try:
                     from app.services.translate import translate_text
 
                     translated = await asyncio.to_thread(
-                        translate_text, full_content, "en", user_lang,
+                        translate_text, full_content, "en", _user_lang,
                         [settings.translate_terminology_name],
                     )
                     yield {"event": "translation", "data": _json.dumps({"content": translated})}
@@ -1003,15 +1072,18 @@ async def send_message_stream(
                 content=full_content,
                 sources=sources_meta,
             )
-            db.add(assistant_msg)
-            await db.flush()
-            await db.refresh(assistant_msg)
+            gen_db.add(assistant_msg)
+            await gen_db.commit()
+            await gen_db.refresh(assistant_msg)
 
             yield {"event": "message_complete", "data": _json.dumps({"message_id": assistant_msg.id})}
 
         except Exception as exc:
             logger.error("Streaming error: %s", exc, exc_info=True)
-            yield {"event": "error", "data": _json.dumps({"detail": str(exc)})}
+            await gen_db.rollback()
+            yield {"event": "error", "data": _json.dumps({"detail": "An internal error occurred"})}
+        finally:
+            await gen_db.close()
 
     return EventSourceResponse(event_generator())
 

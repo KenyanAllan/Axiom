@@ -112,6 +112,10 @@ async def register(
     db.add(workspace)
     await db.flush()
 
+    # Commit before generating the JWT so the user + workspace are
+    # persisted before the client receives a valid token.
+    await db.commit()
+
     token = create_access_token(user_id)
     logger.info("User registered: user_id=%s email=%s workspace_id=%d", user_id, body.email, workspace.id)
     user_out = UserOut.model_validate(user)

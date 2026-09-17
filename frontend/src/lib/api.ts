@@ -29,6 +29,28 @@ const DEMO_WORKSPACE_ID = 1;
 export const TOKEN_KEY = "axiom_token";
 export const WORKSPACE_KEY = "axiom_workspace_id";
 
+// ── AbortController utility ─────────────────────────────────────────────────
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit & { timeoutMs?: number }
+): Promise<Response> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init ?? {};
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  // If the caller already supplied a signal, respect it too
+  if (fetchInit.signal) {
+    fetchInit.signal.addEventListener("abort", () => controller.abort());
+  }
+
+  return fetch(input, { ...fetchInit, signal: controller.signal }).finally(() =>
+    clearTimeout(timeoutId)
+  );
+}
+
 export function getWorkspaceId(): number {
   if (typeof window === "undefined") return DEMO_WORKSPACE_ID;
   const stored = localStorage.getItem(WORKSPACE_KEY);
@@ -66,13 +88,14 @@ export async function authLogin(
   email: string,
   password: string
 ): Promise<AuthResponse> {
-  const res = await fetch(`${BASE}/api/auth/login`, {
+  const res = await fetchWithTimeout(`${BASE}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
-    handle401(res);
+    // Don't call handle401 here — a 401 during login means wrong credentials,
+    // not an expired session. Let the caller display the error to the user.
     const body = await res.json().catch(() => null);
     throw new Error(body?.detail ?? `Login failed: ${res.status}`);
   }
@@ -85,7 +108,7 @@ export async function authRegister(
   displayName: string,
   role: "student" | "teacher"
 ): Promise<AuthResponse> {
-  const res = await fetch(`${BASE}/api/auth/register`, {
+  const res = await fetchWithTimeout(`${BASE}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, display_name: displayName, role }),
@@ -497,7 +520,7 @@ export async function createChatSession(
   title?: string,
   workspaceId: number = getWorkspaceId()
 ): Promise<ChatSessionResponse> {
-  const res = await fetch(`${BASE}/api/chat/sessions`, {
+  const res = await fetchWithTimeout(`${BASE}/api/chat/sessions`, {
     method: "POST",
     headers: headers(userId),
     body: JSON.stringify({ workspace_id: workspaceId, title: title ?? "New Chat" }),

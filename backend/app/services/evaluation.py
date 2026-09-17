@@ -435,7 +435,7 @@ async def evaluate_quiz(
             hints_used=False,
             difficulty=difficulty,
             xp_awarded=xp,
-            rating_change=calculate_rating_change(difficulty, outcome, False),
+            rating_change=rating_delta,
         )
         db.add(attempt)
 

@@ -77,7 +77,8 @@ export interface Activity {
   lastAnswer?: boolean;
 }
 
-let _activityCounter = 100;
+let _activityCounter = Date.now();
+function nextActivityId() { return `act_local_${_activityCounter++}`; }
 
 // ── Demo data ────────────────────────────────────────────────────────────────
 
@@ -327,6 +328,12 @@ export const XP_BY_TYPE: Partial<Record<ActivityType, number>> = {
 
 const DEFAULT_XP = 30;
 
+const ALL_TYPES: ActivityType[] = [
+  "flashcard", "quiz", "myth_buster", "scenario", "feynman", "mini_podcast",
+  "visual_sketch", "visual_label", "parsons", "visual_proof",
+  "figure_flashcard", "figure_label", "figure_explain",
+];
+
 // ── Collapsed list view ──────────────────────────────────────────────────────
 
 interface ActivityFeedProps {
@@ -419,7 +426,7 @@ export function ActivityFeed({
 
       if (topicIds.length === 0) {
         const fallback: Activity = {
-          id: `activity_${++_activityCounter}`,
+          id: nextActivityId(),
           type: "mini_podcast",
           title: fTitle.trim(),
           topic: fTopic.trim(),
@@ -455,7 +462,7 @@ export function ActivityFeed({
       } catch (err) {
         console.error("Audio overview generation failed:", err);
         const fallback: Activity = {
-          id: `activity_${++_activityCounter}`,
+          id: nextActivityId(),
           type: "mini_podcast",
           title: fTitle.trim(),
           topic: fTopic.trim(),
@@ -470,7 +477,7 @@ export function ActivityFeed({
     }
 
     const newActivity: Activity = {
-      id: `activity_${++_activityCounter}`,
+      id: nextActivityId(),
       type: fType,
       title: fTitle.trim(),
       topic: fTopic.trim(),
@@ -489,19 +496,6 @@ export function ActivityFeed({
     setSelectedTopicIds([]);
     setShowForm(false);
   };
-
-  const ALL_TYPES: ActivityType[] = [
-    "flashcard",
-    "quiz",
-    "myth_buster",
-    "scenario",
-    "feynman",
-    "mini_podcast",
-    "visual_sketch",
-    "visual_label",
-    "parsons",
-    "visual_proof",
-  ];
 
   return (
     <div className="space-y-2 px-6 py-5">
@@ -965,7 +959,7 @@ function SubmitRow({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && onSubmit()}
+        onKeyDown={(e) => e.key === "Enter" && value.trim() && !isLoading && onSubmit()}
         placeholder={placeholder}
         className={inputCls}
         disabled={isLoading}
@@ -1856,6 +1850,12 @@ function VisualActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: 
   const visualPrompt = payload.visual_prompt || payload.prompt || "Submit your visual response.";
   const refFigureUrl = useFigureUrl(userId, payload.reference_figure_id);
 
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2164,6 +2164,10 @@ function FigureFlashcardActivity({ activity, userId, onDiscussWithTutor, onSaveR
   const figUrl = useFigureUrl(userId, p.figure_id);
   const [revealed, setRevealed] = useState(false);
 
+  if (!p?.figure_id) {
+    return <div className="text-center text-muted-foreground py-8">No figure available for this activity.</div>;
+  }
+
   return (
     <div className="space-y-4">
       <div className="rounded-lg border bg-card overflow-hidden">
@@ -2203,6 +2207,10 @@ function FigureExplainActivity({ activity, userId, onDiscussWithTutor, onSaveRes
   const [response, setResponse] = useState(activity.lastResponse ?? "");
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
+
+  if (!p?.figure_id) {
+    return <div className="text-center text-muted-foreground py-8">No figure available for this activity.</div>;
+  }
 
   const handleSubmit = async () => {
     if (!response.trim() || isLoading) return;
@@ -2275,6 +2283,12 @@ function FigureLabelActivity({ activity, userId, onDiscussWithTutor, onSaveResul
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2304,6 +2318,10 @@ function FigureLabelActivity({ activity, userId, onDiscussWithTutor, onSaveResul
       setSubmitting(false);
     }
   }, [selectedFile, activity.id, userId, onSaveResult]);
+
+  if (!p?.figure_id) {
+    return <div className="text-center text-muted-foreground py-8">No figure available for this activity.</div>;
+  }
 
   return (
     <div className="space-y-4">
@@ -2412,6 +2430,11 @@ export function ActivityOverlay({
   onActivitiesChange,
 }: ActivityOverlayProps) {
   const activity = activities.find((a) => a.id === activityId);
+
+  const onSaveResult = useCallback((partial: Partial<Activity>) => {
+    onActivitiesChange?.(activities.map((a) => a.id === activityId ? { ...a, ...partial } : a));
+  }, [activityId, activities, onActivitiesChange]);
+
   if (!activity) return null;
   const config = getTypeConfig(activity.type);
   const Renderer = ACTIVITY_RENDERERS[activity.type] ?? FallbackActivity;
@@ -2457,15 +2480,7 @@ export function ActivityOverlay({
               activity={activity}
               userId={userId}
               onDiscussWithTutor={onDiscussWithTutor}
-              onSaveResult={(result) => {
-                onActivitiesChange?.(
-                  activities.map((a) =>
-                    a.id === activity.id
-                      ? { ...a, lastResponse: result.lastResponse, ...(result.lastFeedback ? { lastFeedback: result.lastFeedback } : {}) }
-                      : a
-                  )
-                );
-              }}
+              onSaveResult={onSaveResult}
             />
           </div>
         </div>
@@ -2476,22 +2491,8 @@ export function ActivityOverlay({
               Activity History
             </p>
           </div>
-          <div className="space-y-3 px-5 py-4">
-            <div className="flex items-center gap-3 text-sm">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />
-              <span className="text-muted-foreground">Created</span>
-              <span className="ml-auto font-mono text-xs text-muted-foreground">Sep 14, 2:30 PM</span>
-            </div>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
-              <span className="text-muted-foreground">First attempt</span>
-              <span className="ml-auto font-mono text-xs text-muted-foreground">Sep 15, 10:15 AM</span>
-            </div>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-              <span className="text-muted-foreground">Completed &mdash; +{activity.xp} XP earned</span>
-              <span className="ml-auto font-mono text-xs text-muted-foreground">Sep 16, 9:45 AM</span>
-            </div>
+          <div className="px-5 py-4">
+            <p className="text-sm text-muted-foreground">No previous attempts recorded.</p>
           </div>
         </div>
       </div>

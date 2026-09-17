@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import resolve_topic, verify_workspace_access
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models.tables import AtomicClaim, Topic
@@ -60,10 +61,7 @@ async def create_claim(
     db: AsyncSession = Depends(get_db),
 ) -> ClaimResponse:
     """Create a new atomic claim under an existing topic."""
-    topic = await db.get(Topic, body.topic_id)
-    if topic is None:
-        result = await db.execute(select(Topic).where(Topic.slug == body.topic_id))
-        topic = result.scalar_one_or_none()
+    topic = await resolve_topic(db, body.topic_id)
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{body.topic_id}' not found")
 

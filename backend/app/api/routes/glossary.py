@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -195,7 +195,7 @@ async def delete_glossary_term(
     term_id: int,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-):
+) -> Response:
     """Delete a glossary term (teacher only)."""
     await _require_teacher(db, user_id)
 
@@ -206,7 +206,7 @@ async def delete_glossary_term(
     await db.delete(term)
     await db.flush()
     logger.info("Glossary term deleted: id=%s", term_id)
-    return None
+    return Response(status_code=204)
 
 
 # ── POST /api/glossary/search ────────────────────────────────────────────────

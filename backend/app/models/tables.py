@@ -47,9 +47,9 @@ class User(Base):
     last_active_date = Column(Date, nullable=True)
     preferred_language = Column(String, nullable=True, default="en")
 
-    masteries = relationship("UserMastery", back_populates="user", lazy="selectin")
+    masteries = relationship("UserMastery", back_populates="user", lazy="raise")
     workspaces = relationship("Workspace", back_populates="owner", lazy="selectin")
-    queue_entries = relationship("UserActivityQueue", back_populates="user", lazy="selectin")
+    queue_entries = relationship("UserActivityQueue", back_populates="user", lazy="raise")
 
 
 # ── Classrooms ──────────────────────────────────────────────────────────────────
@@ -121,9 +121,9 @@ class Workspace(Base):
     owner = relationship("User", back_populates="workspaces")
     classroom = relationship("Classroom", back_populates="workspace")
     topics = relationship("Topic", back_populates="workspace", lazy="selectin")
-    activities = relationship("Activity", back_populates="workspace", lazy="selectin")
-    source_documents = relationship("SourceDocument", back_populates="workspace", lazy="selectin")
-    glossary_terms = relationship("GlossaryTerm", back_populates="workspace", lazy="selectin")
+    activities = relationship("Activity", back_populates="workspace", lazy="raise")
+    source_documents = relationship("SourceDocument", back_populates="workspace", lazy="raise")
+    glossary_terms = relationship("GlossaryTerm", back_populates="workspace", lazy="raise")
     figures = relationship("Figure", back_populates="workspace")
 
 
@@ -135,7 +135,7 @@ class SourceDocument(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     workspace_id = Column(
-        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True
     )
     uploader_id = Column(
         String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -166,13 +166,17 @@ class Topic(Base):
 
     id = Column(String, primary_key=True)
     workspace_id = Column(
-        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    slug = Column(String, unique=True, nullable=False)
+    slug = Column(String, nullable=False)
     title = Column(String, nullable=False)
     summary = Column(Text)
     embedding = Column(VectorType)
     complexity_score = Column(Float, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "slug", name="uq_topic_workspace_slug"),
+    )
 
     workspace = relationship("Workspace", back_populates="topics")
     claims = relationship("AtomicClaim", back_populates="topic", lazy="selectin")
@@ -205,7 +209,7 @@ class AtomicClaim(Base):
 
     id = Column(String, primary_key=True)
     topic_id = Column(
-        String, ForeignKey("topics.id", ondelete="CASCADE"), nullable=False
+        String, ForeignKey("topics.id", ondelete="CASCADE"), nullable=False, index=True
     )
     source_document_id = Column(
         Integer, ForeignKey("source_documents.id", ondelete="SET NULL"), nullable=True
@@ -340,7 +344,7 @@ class Activity(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     workspace_id = Column(
-        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True, index=True
     )
     creator_id = Column(
         String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -439,10 +443,10 @@ class ChatSession(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(
-        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     workspace_id = Column(
-        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True
     )
     title = Column(String, nullable=True)
     created_at = Column(
