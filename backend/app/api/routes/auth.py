@@ -72,12 +72,20 @@ AuthResponse.model_rebuild()
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register/", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@router.options("/register")
+@router.options("/register/")
 @limiter.limit("5/minute")
 async def register(
     request: Request,
-    body: RegisterRequest,
+    body: RegisterRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
+    if request.method == "OPTIONS":
+        return JSONResponse(status_code=200, content={"status": "ok"})
+    if body is None:
+        raise HTTPException(status_code=400, detail="Missing request body.")
+
     # Check if email already taken
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
@@ -124,12 +132,19 @@ async def register(
 
 
 @router.post("/login", response_model=AuthResponse)
+@router.post("/login/", response_model=AuthResponse)
+@router.options("/login")
+@router.options("/login/")
 @limiter.limit("10/minute")
 async def login(
     request: Request,
-    body: LoginRequest,
+    body: LoginRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
+    if request.method == "OPTIONS":
+        return JSONResponse(status_code=200, content={"status": "ok"})
+    if body is None:
+        raise HTTPException(status_code=400, detail="Missing request body.")
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
