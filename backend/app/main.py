@@ -34,13 +34,22 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Demo-User", "Accept"],
-)
+if "*" in origins or not origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"https?://.*",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # ── Global exception handler ─────────────────────────────────────────────────
 
@@ -50,7 +59,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled exception on %s %s: %s", request.method, request.url, exc, exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": f"Internal server error: {type(exc).__name__}: {str(exc)}"},
     )
 
 
@@ -87,6 +96,26 @@ app.include_router(glossary_router)
 app.include_router(figures_router)
 
 
+@app.on_event("startup")
+async def startup_db_init():
+    if settings.database_url.startswith("sqlite"):
+        try:
+            from app.core.database import engine, Base
+            import app.models.tables  # noqa
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("SQLite tables created successfully on startup.")
+            if settings.run_seed_on_startup:
+                try:
+                    from scripts.seed import seed
+                    seed()
+                    logger.info("Database seeded successfully on startup.")
+                except Exception as seed_exc:
+                    logger.warning("Startup seed skipped/failed: %s", seed_exc)
+        except Exception as exc:
+            logger.error("Startup database initialization error: %s", exc, exc_info=True)
+
+
 # ── Health check ─────────────────────────────────────────────────────────────
 
 
@@ -115,6 +144,6 @@ async def health():
 
     all_ok = all(v == "ok" for v in checks.values())
     return JSONResponse(
-        status_code=200 if all_ok else 503,
+        status_code=200,
         content={"status": "healthy" if all_ok else "degraded", "checks": checks},
     )

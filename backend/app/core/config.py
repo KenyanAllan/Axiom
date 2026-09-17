@@ -12,10 +12,10 @@ class Settings(BaseSettings):
 
     # ── Database ────────────────────────────────────────────────────────────────
     database_url: str = (
-        "postgresql+asyncpg://axiom:axiom_dev_secret@localhost:5432/axiom"
+        "sqlite+aiosqlite:////tmp/axiom.db"
     )
     sync_database_url: str = (
-        "postgresql+psycopg2://axiom:axiom_dev_secret@localhost:5432/axiom"
+        "sqlite:////tmp/axiom.db"
     )
     database_ssl: bool = False
 

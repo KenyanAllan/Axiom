@@ -11,16 +11,21 @@ settings = get_settings()
 
 _engine_kwargs: dict = {
     "echo": settings.log_level == "debug",
-    "pool_size": 10,
-    "max_overflow": 20,
-    "pool_pre_ping": True,
-    "pool_recycle": 3600,
 }
-if settings.database_ssl:
-    import ssl as _ssl
+if not settings.database_url.startswith("sqlite"):
+    _engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_pre_ping": True,
+        "pool_recycle": 3600,
+    })
+    if settings.database_ssl:
+        import ssl as _ssl
 
-    _ssl_ctx = _ssl.create_default_context()
-    _engine_kwargs["connect_args"] = {"ssl": _ssl_ctx}
+        _ssl_ctx = _ssl.create_default_context()
+        _engine_kwargs["connect_args"] = {"ssl": _ssl_ctx}
+else:
+    _engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
 
 engine = create_async_engine(settings.database_url, **_engine_kwargs)
 

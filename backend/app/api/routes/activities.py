@@ -8,7 +8,7 @@ import asyncio
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -132,7 +132,7 @@ async def activity_feed(
         .where(func.coalesce(UserMastery.status, "unseen") != "mastered")
         .order_by(
             # Active first, then unseen
-            func.case(
+            case(
                 (func.coalesce(UserMastery.status, "unseen") == "active", 0),
                 else_=1,
             ),

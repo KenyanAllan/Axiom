@@ -189,8 +189,8 @@ WITH topic_claim_counts AS (
         t.id AS topic_id,
         t.slug,
         t.title,
-        COUNT(ac.id)::int AS claim_count,
-        COUNT(um.claim_id) FILTER (WHERE um.status = 'mastered')::int AS mastered_count
+        COUNT(ac.id) AS claim_count,
+        COALESCE(SUM(CASE WHEN um.status = 'mastered' THEN 1 ELSE 0 END), 0) AS mastered_count
     FROM topics t
     LEFT JOIN atomic_claims ac ON ac.topic_id = t.id
     LEFT JOIN user_mastery um

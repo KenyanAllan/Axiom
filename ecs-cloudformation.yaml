@@ -12,13 +12,13 @@ Parameters:
 
   DatabaseURL:
     Type: String
-    Default: 'postgresql+asyncpg://axiom:axiom_dev_secret@localhost:5432/axiom'
-    Description: Aurora / RDS PostgreSQL connection URL (postgresql+asyncpg://...).
+    Default: 'sqlite+aiosqlite:////tmp/axiom.db'
+    Description: Database connection URL (defaults to standalone SQLite).
 
   SyncDatabaseURL:
     Type: String
-    Default: 'postgresql+psycopg2://axiom:axiom_dev_secret@localhost:5432/axiom'
-    Description: Synchronous PostgreSQL connection URL for migrations (postgresql+psycopg2://...).
+    Default: 'sqlite:////tmp/axiom.db'
+    Description: Synchronous database connection URL for migrations.
 
   RedisURL:
     Type: String

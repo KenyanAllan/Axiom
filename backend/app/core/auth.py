@@ -99,7 +99,12 @@ async def get_current_user(
         logger.debug("Authenticated user %s via demo header", x_demo_user)
         return x_demo_user
 
-    # 3. No credentials
+    # 3. Demo mode default fallback
+    if settings.enable_demo_auth:
+        logger.debug("No credentials provided, defaulting to demo user usr_student_demo")
+        return "usr_student_demo"
+
+    # 4. No credentials
     logger.warning("Authentication attempt with no credentials")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

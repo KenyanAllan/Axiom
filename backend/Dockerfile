@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 COPY scripts/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && \
+    find /app/scripts -type f -name "*.sh" -exec sed -i 's/\r$//' {} + && \
+    chmod +x /entrypoint.sh /app/scripts/*.sh
 
 EXPOSE 8000
 

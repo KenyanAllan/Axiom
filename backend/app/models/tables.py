@@ -2,7 +2,6 @@
 
 from datetime import date, datetime, timezone
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     Column,
@@ -11,12 +10,21 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+
+try:
+    from pgvector.sqlalchemy import Vector
+    VectorType = Vector(1024).with_variant(JSON, "sqlite")
+except Exception:
+    VectorType = JSON
+
+JSONType = JSONB().with_variant(JSON, "sqlite")
 
 from app.core.database import Base
 
@@ -138,7 +146,7 @@ class SourceDocument(Base):
     size_bytes = Column(Integer, nullable=True)
     status = Column(String, nullable=False, default="uploaded")  # uploaded | processing | ready | error
     transcript_s3_key = Column(String, nullable=True)
-    metadata_ = Column("metadata", JSONB, nullable=False, default=dict)
+    metadata_ = Column("metadata", JSONType, nullable=False, default=dict)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -163,7 +171,7 @@ class Topic(Base):
     slug = Column(String, unique=True, nullable=False)
     title = Column(String, nullable=False)
     summary = Column(Text)
-    embedding = Column(Vector(1024))
+    embedding = Column(VectorType)
     complexity_score = Column(Float, nullable=True)
 
     workspace = relationship("Workspace", back_populates="topics")
@@ -207,7 +215,7 @@ class AtomicClaim(Base):
     diagnostic_prompt = Column(Text)
     flawed_snippet = Column(Text)
     rubric = Column(Text)
-    embedding = Column(Vector(1024))
+    embedding = Column(VectorType)
     original_language = Column(String, nullable=True)
     original_content = Column(Text, nullable=True)
     complexity_score = Column(Float, nullable=True)
@@ -232,9 +240,9 @@ class GlossaryTerm(Base):
     )
     term = Column(String, nullable=False)
     definition = Column(Text, nullable=False)
-    source_ref = Column(JSONB, nullable=True)
+    source_ref = Column(JSONType, nullable=True)
     is_auto_extracted = Column(Boolean, nullable=False, default=True)
-    embedding = Column(Vector(1024))
+    embedding = Column(VectorType)
     original_language = Column(String, nullable=True)
     original_definition = Column(Text, nullable=True)
     created_at = Column(
@@ -269,9 +277,9 @@ class Figure(Base):
     page_number = Column(Integer, nullable=True)
     caption = Column(Text, nullable=False)
     figure_type = Column(String, nullable=False, default="unknown")
-    labels = Column(JSONB, nullable=True)
+    labels = Column(JSONType, nullable=True)
     ocr_text = Column(Text, nullable=True)
-    embedding = Column(Vector(1024))
+    embedding = Column(VectorType)
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
     size_bytes = Column(Integer, nullable=True)
@@ -312,7 +320,7 @@ class UserMastery(Base):
     )
     understanding_rating = Column(Integer, nullable=False, default=1)
     status = Column(String, nullable=False, default="unseen")
-    history = Column(JSONB, nullable=False, default=list)
+    history = Column(JSONType, nullable=False, default=list)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -344,9 +352,9 @@ class Activity(Base):
     type = Column(String, nullable=False)
     title = Column(String, nullable=False)
     difficulty = Column(Integer, nullable=False, default=1)
-    target_claim_ids = Column(JSONB, nullable=False, default=list)
-    friction_levers = Column(JSONB, nullable=True)
-    payload = Column(JSONB, nullable=False, default=dict)
+    target_claim_ids = Column(JSONType, nullable=False, default=list)
+    friction_levers = Column(JSONType, nullable=True)
+    payload = Column(JSONType, nullable=False, default=dict)
     audit_passed = Column(Boolean, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
@@ -457,8 +465,8 @@ class ChatMessage(Base):
     )
     role = Column(String, nullable=False)  # user | assistant
     content = Column(Text, nullable=False)
-    sources = Column(JSONB, nullable=True)
-    image_s3_keys = Column(JSONB, nullable=True)
+    sources = Column(JSONType, nullable=True)
+    image_s3_keys = Column(JSONType, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
