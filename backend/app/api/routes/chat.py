@@ -7,8 +7,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.rate_limit import limiter
 from app.models.tables import (
     AtomicClaim,
     ChatMessage,
@@ -45,7 +46,7 @@ class ChatSessionCreate(BaseModel):
 
 
 class ChatMessageCreate(BaseModel):
-    content: str
+    content: str = Field(..., min_length=1, max_length=10000)
 
 
 class ChatMessageResponse(BaseModel):
@@ -100,10 +101,15 @@ WHEN TO USE TOOLS:
 - When the user asks what they should study next or about their learning progress
 - When the user asks to see their queue or manage their practice activities
 - When the user asks to browse topics or see what claims are in a topic
+- When the user asks for an audio overview, podcast, or listening summary of topics
+- When the user asks about the meaning or definition of a term
 
 GUIDELINES:
 - Before creating activities, use list_topics or get_topic_claims to find the \
 correct claim_id — do NOT guess claim IDs
+- create_activities_for_claim generates six types: flashcard, true_false, \
+multi_choice, fill_blank, wrong_on_purpose, and feynman. You can specify \
+which types to create, or omit to create all six
 - Use get_learning_frontier to advise what to study next
 - Use get_mastery_status to check progress before making recommendations
 - You may chain multiple tool calls to fulfill a request (e.g., list_topics → \
@@ -111,6 +117,11 @@ get_topic_claims → create_activities_for_claim)
 - Always explain what you did after using tools — tell the user what was \
 created, added, or found
 - Keep tool usage focused on what the user actually asked for
+- When the user asks for an audio overview or podcast, use \
+generate_audio_overview with the relevant topic_ids. You can choose a style: \
+"conversational" (casual study-buddy), "narrative" (documentary storytelling), \
+or "discussion" (two people talking it through). Pick the style that best fits \
+what the user is asking for, or ask them if unsure
 - When the user asks about the meaning or definition of a term, use \
 search_glossary to look it up
 - When you find glossary results, present the term and definition clearly
@@ -324,7 +335,9 @@ async def get_session(
     response_model=ChatMessageResponse,
     status_code=201,
 )
+@limiter.limit("20/minute")
 async def send_message(
+    request: Request,
     session_id: int,
     body: ChatMessageCreate,
     user_id: str = Depends(get_current_user),

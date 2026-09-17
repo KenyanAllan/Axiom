@@ -67,10 +67,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "create_activities_for_claim",
         "description": (
-            "Create practice activities (flashcard, true/false, multiple choice) "
-            "for a specific atomic claim. For teachers, activities are automatically "
-            "shared with all students in the classroom. For students, activities are "
-            "added to their personal practice queue."
+            "Create practice activities for a specific atomic claim. Available types: "
+            "flashcard, true_false, multi_choice, fill_blank, wrong_on_purpose, feynman. "
+            "For teachers, activities are automatically shared with all students in the "
+            "classroom. For students, activities are added to their personal practice queue."
         ),
         "inputSchema": {
             "json": {
@@ -183,6 +183,33 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "generate_audio_overview",
+        "description": (
+            "Generate an audio overview (mini podcast) for one or more topics. "
+            "Creates an AI-scripted narration synthesized as audio. "
+            "Use this when the user asks for an audio summary, podcast, or "
+            "listening-based review of topics. Requires at least one topic_id."
+        ),
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "topic_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "One or more topic IDs to include in the overview.",
+                    },
+                    "style": {
+                        "type": "string",
+                        "enum": ["conversational", "narrative", "discussion"],
+                        "description": "Narration style. 'conversational' is a casual study-buddy tone, 'narrative' is documentary storytelling, 'discussion' is two people talking it through. Default: conversational.",
+                    },
+                },
+                "required": ["topic_ids"],
+            }
+        },
+    },
+    {
         "name": "search_glossary",
         "description": (
             "Search the workspace glossary for a term or concept. "
@@ -245,6 +272,11 @@ async def execute_tool(
 
         elif tool_name == "get_mastery_status":
             return await _tool_mastery(db, user_id, workspace_id, tool_input)
+
+        elif tool_name == "generate_audio_overview":
+            return await _tool_generate_audio_overview(
+                db, tool_input, user_id, workspace_id, user_role, classroom_id
+            )
 
         elif tool_name == "search_glossary":
             return await _tool_search_glossary(db, workspace_id, tool_input)
@@ -501,6 +533,54 @@ async def _tool_mastery(
         "mastered_count": mastered,
         "message": f"Mastered {mastered}/{len(items)} claims.",
     }
+
+
+async def _tool_generate_audio_overview(
+    db: AsyncSession,
+    tool_input: dict,
+    user_id: str,
+    workspace_id: int,
+    user_role: str,
+    classroom_id: int | None,
+) -> dict:
+    from app.services.activity_generator import generate_audio_overview
+    from app.services.classroom import broadcast_activity_to_class
+    from app.services.queue import add_to_queue
+
+    topic_ids = tool_input.get("topic_ids", [])
+    if not topic_ids:
+        return {"error": "topic_ids is required (at least one topic ID)"}
+
+    style = tool_input.get("style", "conversational")
+
+    try:
+        activity = await generate_audio_overview(
+            db=db,
+            workspace_id=workspace_id,
+            creator_id=user_id,
+            topic_ids=topic_ids,
+            style=style,
+        )
+
+        if user_role == "teacher" and classroom_id is not None:
+            activity.scope = "CLASSROOM_SHARED"
+            activity.classroom_id = classroom_id
+            await db.flush()
+            await broadcast_activity_to_class(db, classroom_id, activity.id)
+        else:
+            await add_to_queue(db, user_id, activity.id)
+
+        payload = activity.payload or {}
+        audience = "the entire class" if user_role == "teacher" and classroom_id else "your activity feed"
+        return {
+            "activity_id": activity.id,
+            "title": activity.title,
+            "style": style,
+            "audio_url": payload.get("audio_url", ""),
+            "message": f"Created audio overview '{activity.title}'. It has been added to {audience}.",
+        }
+    except ValueError as exc:
+        return {"error": str(exc)}
 
 
 async def _tool_search_glossary(

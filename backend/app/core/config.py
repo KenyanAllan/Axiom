@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     sync_database_url: str = (
         "postgresql+psycopg2://axiom:axiom_dev_secret@localhost:5432/axiom"
     )
+    database_ssl: bool = False
 
     # ── Redis / Celery ──────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379/0"
@@ -47,13 +48,23 @@ class Settings(BaseSettings):
 
     # ── App ─────────────────────────────────────────────────────────────────────
     log_level: str = "info"
+    environment: str = "development"
     xp_per_correct_answer: int = 50
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    upload_max_bytes: int = 50 * 1024 * 1024  # 50 MB
 
     # ── Demo auth ───────────────────────────────────────────────────────────────
+    enable_demo_auth: bool = True
     demo_user_ids: list[str] = ["usr_student_demo", "usr_teacher_demo", "usr_learner_demo"]
+    run_seed_on_startup: bool = True
 
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    s = Settings()
+    if s.environment == "production" and s.jwt_secret_key == "CHANGE-ME-to-a-random-64-char-string":
+        raise RuntimeError(
+            "FATAL: JWT_SECRET_KEY must be set to a secure random value in production. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+        )
+    return s

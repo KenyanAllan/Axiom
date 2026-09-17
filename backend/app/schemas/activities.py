@@ -230,7 +230,7 @@ QuizQuestionType = Literal["multi_choice", "true_false", "fill_blank", "short_an
 
 
 class GenerateDeckRequest(BaseModel):
-    workspace_id: int = 1
+    workspace_id: int
     deck_size: Literal[5, 10, 15] = 10
     topic_ids: list[str] | None = Field(
         None, description="Specific topics to draw from. If empty, picks across all topics."
@@ -254,7 +254,7 @@ class DeckResponse(BaseModel):
 
 
 class GenerateQuizRequest(BaseModel):
-    workspace_id: int = 1
+    workspace_id: int
     question_count: int = Field(5, ge=1, le=10)
     topic_ids: list[str] | None = Field(
         None, description="Specific topics. If empty, picks across all topics."

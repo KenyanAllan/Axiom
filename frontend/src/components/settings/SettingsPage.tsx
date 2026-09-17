@@ -345,12 +345,10 @@ export function SettingsPage({ user, settings, onUpdateProfile, onUpdateSetting 
 
           {/* Font scale */}
           <div className="px-5 py-4">
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm font-medium">
-                <Type className="h-4 w-4 text-muted-foreground" /> Font Size
-              </label>
-              <span className="font-mono text-xs text-muted-foreground">{Math.round(settings.fontScale * 100)}%</span>
-            </div>
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <Type className="h-4 w-4 text-muted-foreground" /> Font Size
+            </label>
+            <p className="mt-2 text-center font-mono text-lg font-semibold">{Math.round(settings.fontScale * 100)}%</p>
             <input
               type="range"
               min={0.75}
@@ -358,13 +356,8 @@ export function SettingsPage({ user, settings, onUpdateProfile, onUpdateSetting 
               step={0.05}
               value={settings.fontScale}
               onChange={(e) => onUpdateSetting("fontScale", parseFloat(e.target.value))}
-              className="mt-3 w-full accent-primary"
+              className="mt-2 w-full accent-primary"
             />
-            <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
-              <span>75%</span>
-              <span>100%</span>
-              <span>150%</span>
-            </div>
           </div>
         </div>
       </section>

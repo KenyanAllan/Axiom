@@ -11,6 +11,8 @@ import {
   INITIAL_ACTIVITIES,
 } from "@/components/activity/ActivityFeed";
 import type { Activity } from "@/components/activity/ActivityFeed";
+import { CompletedActivityReviewOverlay } from "@/components/activity/CompletedActivityReviewOverlay";
+import type { CompletedActivityReview } from "@/components/activity/CompletedActivityReviewOverlay";
 import type { WikiPage } from "@/components/layout/CenterStage";
 import { INITIAL_WIKI_PAGES } from "@/components/layout/CenterStage";
 import type { ChatSession } from "@/components/layout/CenterStage";
@@ -24,6 +26,7 @@ import {
   fetchClaims,
   listChatSessions,
   getChatSession,
+  createChatSession,
 } from "@/lib/api";
 import { XP_BY_TYPE } from "@/components/activity/ActivityFeed";
 
@@ -40,8 +43,10 @@ export default function Home() {
     useState<Activity[]>(INITIAL_ACTIVITIES);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>(INITIAL_WIKI_PAGES);
   const [wikiPageId, setWikiPageId] = useState<string | null>(null);
-  const [pendingChatMessage, setPendingChatMessage] = useState<string | null>(null);
+  const [pendingChatMessage, setPendingChatMessage] = useState<{ text: string; title?: string } | null>(null);
   const [studentView, setStudentView] = useState(false);
+  const [reviewingActivity, setReviewingActivity] = useState<CompletedActivityReview | null>(null);
+  const [pendingSourceDocId, setPendingSourceDocId] = useState<string | null>(null);
 
   // ── Chat session state ────────────────────────────────────────────────────
   const [sessions, setSessions] = useState<ChatSession[]>([SEED_SESSION]);
@@ -150,6 +155,7 @@ export default function Home() {
               title: c.title,
               description: c.content,
               anchors: c.rubric ? [c.rubric] : [],
+              sourceDocumentId: c.source_document_id != null ? String(c.source_document_id) : null,
             })),
           };
         });
@@ -173,7 +179,7 @@ export default function Home() {
 
   const handleDiscussWithTutor = useCallback((context: string) => {
     setExpandedActivityId(null);
-    setPendingChatMessage(context);
+    setPendingChatMessage({ text: context });
   }, []);
 
   const handleWikiSelect = useCallback((id: string) => {
@@ -191,20 +197,58 @@ export default function Home() {
     });
   }, []);
 
+  const handleCreateNewChat = useCallback(async () => {
+    const localId = `new_chat_${Date.now()}`;
+    const newSession: ChatSession = { id: localId, title: "New Chat", messages: [] };
+    setSessions((prev) => [...prev, newSession]);
+    setActiveSessionId(localId);
+    setActiveTab("chat");
+
+    if (user?.id) {
+      try {
+        const backendSession = await createChatSession(user.id);
+        setSessions((prev) =>
+          prev.map((s) => (s.id === localId ? { ...s, backendId: backendSession.id } : s))
+        );
+      } catch {
+        // keep local-only session
+      }
+    }
+  }, [user?.id]);
+
   const effectiveRole = studentView && user?.role === "teacher" ? "student" as const : user?.role ?? "student" as const;
 
   const handleToggleStudentView = useCallback(() => {
     setStudentView((prev) => !prev);
   }, []);
 
+  const handleReviewActivity = useCallback((review: CompletedActivityReview) => {
+    setReviewingActivity(review);
+  }, []);
+
+  const handleCloseReview = useCallback(() => {
+    setReviewingActivity(null);
+  }, []);
+
+  const handleReviewDiscussWithTutor = useCallback((context: string) => {
+    const title = reviewingActivity?.activityTitle ?? undefined;
+    setReviewingActivity(null);
+    setPendingChatMessage({ text: context, title });
+  }, [reviewingActivity]);
+
+  const handleViewSource = useCallback((sourceDocumentId: string) => {
+    setPendingSourceDocId(sourceDocumentId);
+    setActiveTab("sources");
+  }, []);
+
   if (!mounted || !isLoggedIn || !user) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-sm font-bold text-primary-foreground">
+        <div className="flex items-center gap-6">
+          <div className="flex h-24 w-24 items-center justify-center rounded-3xl bg-primary text-4xl font-bold text-primary-foreground">
             Ax
           </div>
-          <span className="font-mono text-lg font-semibold">Axiom</span>
+          <span className="font-mono text-6xl font-semibold">Axiom</span>
         </div>
       </div>
     );
@@ -230,6 +274,7 @@ export default function Home() {
           activeSessionId={activeSessionId}
           onSessionSelect={setActiveSessionId}
           onDeleteSession={handleDeleteSession}
+          onCreateNewChat={handleCreateNewChat}
         />
         <CenterStage
           activeTab={activeTab}
@@ -254,11 +299,17 @@ export default function Home() {
           settings={settings}
           onUpdateProfile={updateProfile}
           onUpdateSetting={updateSetting}
+          onReviewActivity={handleReviewActivity}
+          onViewSource={handleViewSource}
+          pendingSourceDocId={pendingSourceDocId}
+          onPendingSourceDocHandled={() => setPendingSourceDocId(null)}
         />
         <RightSidebar
           user={user}
           onActivityClick={handleExpandActivity}
           userRole={effectiveRole}
+          onTabChange={setActiveTab}
+          onReviewActivity={handleReviewActivity}
         />
 
       {/* Fullscreen activity overlay */}
@@ -269,6 +320,15 @@ export default function Home() {
           onClose={handleCloseActivity}
           onDiscussWithTutor={handleDiscussWithTutor}
           onActivitiesChange={setActivities}
+        />
+      )}
+
+      {/* Completed activity review overlay */}
+      {reviewingActivity && (
+        <CompletedActivityReviewOverlay
+          review={reviewingActivity}
+          onClose={handleCloseReview}
+          onDiscussWithTutor={handleReviewDiscussWithTutor}
         />
       )}
     </div>

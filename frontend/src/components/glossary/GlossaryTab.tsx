@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookA,
   ChevronLeft,
+  ExternalLink,
   FileText,
   Pencil,
   Plus,
@@ -17,13 +18,16 @@ import {
   createGlossaryTerm,
   deleteGlossaryTerm,
   fetchGlossaryTerms,
+  listSourceDocs,
   searchGlossary,
   updateGlossaryTerm,
 } from "@/lib/api";
+import type { SourceDocument } from "@/lib/types";
 
 interface GlossaryTabProps {
   userId: string;
   userRole: UserRole;
+  onViewSource?: (sourceDocumentId: string) => void;
 }
 
 type GlossaryMode = "list" | "detail" | "create" | "edit";
@@ -236,7 +240,7 @@ const DEMO_GLOSSARY: GlossaryTermResponse[] = [
 const inputCls =
   "w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring";
 
-export function GlossaryTab({ userId, userRole }: GlossaryTabProps) {
+export function GlossaryTab({ userId, userRole, onViewSource }: GlossaryTabProps) {
   const [terms, setTerms] = useState<GlossaryTermResponse[]>(DEMO_GLOSSARY);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<GlossaryMode>("list");
@@ -247,6 +251,8 @@ export function GlossaryTab({ userId, userRole }: GlossaryTabProps) {
 
   const [formTerm, setFormTerm] = useState("");
   const [formDefinition, setFormDefinition] = useState("");
+  const [formSourceDocId, setFormSourceDocId] = useState<number | undefined>(undefined);
+  const [sourceDocs, setSourceDocs] = useState<SourceDocument[]>([]);
   const [saving, setSaving] = useState(false);
 
   const isTeacher = userRole === "teacher" || userRole === "individual_learner";
@@ -326,11 +332,14 @@ export function GlossaryTab({ userId, userRole }: GlossaryTabProps) {
     if (!formTerm.trim() || !formDefinition.trim()) return;
     setSaving(true);
     try {
-      const created = await createGlossaryTerm(userId, formTerm, formDefinition);
+      const created = await createGlossaryTerm(
+        userId, formTerm, formDefinition, undefined, formSourceDocId
+      );
       setTerms((prev) => [...prev, created].sort((a, b) => a.term.localeCompare(b.term)));
       setMode("list");
       setFormTerm("");
       setFormDefinition("");
+      setFormSourceDocId(undefined);
     } catch {
       // handle error
     } finally {
@@ -386,6 +395,8 @@ export function GlossaryTab({ userId, userRole }: GlossaryTabProps) {
   const openCreate = () => {
     setFormTerm("");
     setFormDefinition("");
+    setFormSourceDocId(undefined);
+    listSourceDocs(userId).then(setSourceDocs).catch(() => {});
     setMode("create");
   };
 
@@ -449,10 +460,21 @@ export function GlossaryTab({ userId, userRole }: GlossaryTabProps) {
 
         {selectedTerm.source_ref && (
           <div className="mt-4 rounded-lg border bg-card px-5 py-4">
-            <h3 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-              <FileText className="h-3.5 w-3.5" />
-              Source Reference
-            </h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5" />
+                Source Reference
+              </h3>
+              {selectedTerm.source_document_id && onViewSource && (
+                <button
+                  onClick={() => onViewSource(String(selectedTerm.source_document_id))}
+                  className="flex items-center gap-1 rounded-md border border-primary/30 bg-background px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/5"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  View in Source
+                </button>
+              )}
+            </div>
             {selectedTerm.source_ref.chunk_index != null && (
               <p className="text-xs text-muted-foreground mb-1">
                 Chunk #{selectedTerm.source_ref.chunk_index}
@@ -506,6 +528,28 @@ export function GlossaryTab({ userId, userRole }: GlossaryTabProps) {
               onChange={(e) => setFormDefinition(e.target.value)}
             />
           </div>
+          {!isEdit && sourceDocs.length > 0 && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">
+                Source Document
+                <span className="ml-1 font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <select
+                className={inputCls}
+                value={formSourceDocId ?? ""}
+                onChange={(e) =>
+                  setFormSourceDocId(e.target.value ? Number(e.target.value) : undefined)
+                }
+              >
+                <option value="">None</option>
+                {sourceDocs.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {doc.filename}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               onClick={isEdit ? handleUpdate : handleCreate}
@@ -533,7 +577,7 @@ export function GlossaryTab({ userId, userRole }: GlossaryTabProps) {
       {/* Header */}
       <div className="mb-5 flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">Glossary</h2>
+          <h2 className="text-xl font-bold">Glossary</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {terms.length} term{terms.length !== 1 ? "s" : ""}
           </p>
@@ -645,7 +689,14 @@ export function GlossaryTab({ userId, userRole }: GlossaryTabProps) {
                   {term.is_auto_extracted ? "Auto" : "Manual"}
                 </span>
                 {term.source_ref?.chunk_index != null && (
-                  <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                  <span
+                    onClick={term.source_document_id && onViewSource ? (e) => { e.stopPropagation(); onViewSource(String(term.source_document_id)); } : undefined}
+                    className={`flex items-center gap-0.5 text-[10px] ${
+                      term.source_document_id && onViewSource
+                        ? "text-primary cursor-pointer hover:underline"
+                        : "text-muted-foreground"
+                    }`}
+                  >
                     <FileText className="h-2.5 w-2.5" />
                     Chunk #{term.source_ref.chunk_index}
                   </span>

@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
+import random
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import create_access_token, hash_password, verify_password
 from app.core.database import get_db
+from app.core.rate_limit import limiter
 from app.models.tables import User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+AVATAR_ICONS = ["🧠", "🔬", "📐", "💡", "🎯", "🚀", "⚡", "🧮", "📊", "🎓", "🌟", "🔭", "🧪", "📚", "🎨"]
+AVATAR_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#06b6d4", "#6366f1", "#e11d48"]
+
+
+def random_avatar() -> str:
+    return f"{random.choice(AVATAR_ICONS)}|{random.choice(AVATAR_COLORS)}"
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -22,14 +31,14 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=6)
-    display_name: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=6, max_length=128)
+    display_name: str = Field(..., min_length=1, max_length=100)
     role: Literal["student", "teacher", "individual_learner"]
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., max_length=128)
 
 
 class AuthResponse(BaseModel):
@@ -43,6 +52,7 @@ class UserOut(BaseModel):
     display_name: str
     email: str | None = None
     role: str
+    avatar: str | None = None
     xp: int
     level: int
     streak_days: int
@@ -59,7 +69,9 @@ AuthResponse.model_rebuild()
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
 async def register(
+    request: Request,
     body: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
@@ -78,6 +90,7 @@ async def register(
         email=body.email,
         hashed_password=hash_password(body.password),
         role=body.role,
+        avatar=random_avatar(),
         xp=0,
         level=1,
         streak_days=0,
@@ -96,7 +109,9 @@ async def register(
 
 
 @router.post("/login", response_model=AuthResponse)
+@limiter.limit("10/minute")
 async def login(
+    request: Request,
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:

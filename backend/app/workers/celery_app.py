@@ -81,7 +81,11 @@ def ingest_markdown_chunk(
     # (We call the Converse API with a different system prompt.)
     import boto3
 
-    client = boto3.client("bedrock-runtime", region_name=settings.aws_default_region)
+    kwargs = {"region_name": settings.aws_default_region}
+    if settings.aws_access_key_id:
+        kwargs["aws_access_key_id"] = settings.aws_access_key_id
+        kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+    client = boto3.client("bedrock-runtime", **kwargs)
 
     try:
         response = client.converse(

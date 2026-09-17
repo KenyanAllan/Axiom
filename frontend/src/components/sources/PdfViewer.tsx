@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -22,12 +22,16 @@ interface PdfViewerProps {
   isDemo: boolean;
 }
 
+const WINDOW_SIZE = 5;
+
 export default function PdfViewer({ url, filename, isDemo }: PdfViewerProps) {
   const [numPages, setNumPages] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [scale, setScale] = useState(1.0);
   const [pageInput, setPageInput] = useState("1");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const onLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
     setNumPages(n);
@@ -37,6 +41,23 @@ export default function PdfViewer({ url, filename, isDemo }: PdfViewerProps) {
   const onLoadError = useCallback(() => {
     setLoadError("Failed to load PDF. The URL may have expired.");
   }, []);
+
+  const visiblePages = useMemo(() => {
+    if (!numPages) return [];
+    const half = Math.floor(WINDOW_SIZE / 2);
+    let start = currentPage - half;
+    let end = currentPage + half;
+    if (start < 1) { start = 1; end = Math.min(WINDOW_SIZE, numPages); }
+    if (end > numPages) { end = numPages; start = Math.max(1, numPages - WINDOW_SIZE + 1); }
+    const pages: number[] = [];
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  }, [currentPage, numPages]);
+
+  useEffect(() => {
+    const el = pageRefs.current.get(currentPage);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [currentPage]);
 
   const goToPage = useCallback(
     (page: number) => {
@@ -161,7 +182,7 @@ export default function PdfViewer({ url, filename, isDemo }: PdfViewerProps) {
       </div>
 
       {/* PDF content */}
-      <div className="flex max-h-[700px] justify-center overflow-auto bg-muted/30 p-4">
+      <div ref={scrollRef} className="max-h-[700px] overflow-auto bg-muted/30 p-4">
         {loadError ? (
           <div className="flex flex-col items-center justify-center py-20">
             <AlertCircle className="h-8 w-8 text-red-500" />
@@ -179,17 +200,32 @@ export default function PdfViewer({ url, filename, isDemo }: PdfViewerProps) {
               </div>
             }
           >
-            <Page
-              pageNumber={currentPage}
-              scale={scale}
-              renderTextLayer={true}
-              renderAnnotationLayer={true}
-              loading={
-                <div className="flex items-center justify-center py-20">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <div className="flex flex-col items-center gap-4">
+              {visiblePages.map((pageNum) => (
+                <div
+                  key={pageNum}
+                  ref={(el) => {
+                    if (el) pageRefs.current.set(pageNum, el);
+                    else pageRefs.current.delete(pageNum);
+                  }}
+                >
+                  <Page
+                    pageNumber={pageNum}
+                    scale={scale}
+                    renderTextLayer={true}
+                    renderAnnotationLayer={true}
+                    loading={
+                      <div className="flex items-center justify-center py-20">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                      </div>
+                    }
+                  />
+                  <p className="mt-1 text-center font-mono text-[10px] text-muted-foreground">
+                    Page {pageNum}
+                  </p>
                 </div>
-              }
-            />
+              ))}
+            </div>
           </Document>
         )}
       </div>

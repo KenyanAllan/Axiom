@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import { Flame, Trophy, ArrowLeft, Medal, Crown, ChevronDown, ChevronUp, MessageSquare, Bot } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import type { UserProfile, MasteryEntry, HistoryEvent, ClaimResponse, TopicSummary } from "@/lib/types";
+import type { UserProfile, MasteryEntry, HistoryEvent, ClaimResponse, TopicSummary, ViewTab } from "@/lib/types";
+import type { CompletedActivityReview } from "@/components/activity/CompletedActivityReviewOverlay";
 import { formatXP } from "@/lib/utils";
 import {
   fetchUserProfile,
@@ -22,6 +23,8 @@ interface RightSidebarProps {
   user: UserProfile;
   onActivityClick?: (activityId: string) => void;
   userRole?: UserProfile["role"];
+  onTabChange?: (tab: ViewTab) => void;
+  onReviewActivity?: (review: CompletedActivityReview) => void;
 }
 
 const LEADERBOARD = [
@@ -47,9 +50,11 @@ interface TimelineEntry {
   xp: number;
   time: string;
   activityId: string;
+  activityType: string;
   studentResponse: string | null;
   feedback: string | null;
   outcome: string;
+  payload?: Record<string, any> | null;
 }
 
 const STUDENT_ACTIVITY: TimelineEntry[] = [
@@ -59,6 +64,7 @@ const STUDENT_ACTIVITY: TimelineEntry[] = [
     xp: 25,
     time: "10m ago",
     activityId: "act_fc_1",
+    activityType: "flashcard",
     studentResponse: "Row reduction transforms the augmented matrix to echelon form using elementary row operations.",
     feedback: "Correct! You've identified the core process of Gaussian elimination.",
     outcome: "understood",
@@ -69,9 +75,35 @@ const STUDENT_ACTIVITY: TimelineEntry[] = [
     xp: 60,
     time: "1h ago",
     activityId: "act_quiz_1",
-    studentResponse: "The pivot is the first nonzero entry in each row of the echelon form.",
-    feedback: "Correct!",
+    activityType: "quiz",
+    studentResponse: JSON.stringify({ 0: 1, 1: true, 2: "The pivot is the first nonzero entry in each row of the echelon form.", 3: ["pivot", "column"] }),
+    feedback: "Great job! You scored 4/4 on this quiz. You clearly understand how to identify pivot positions in a matrix.",
     outcome: "understood",
+    payload: {
+      questions: [
+        {
+          type: "multi_choice",
+          question: "Which element is the pivot in the first row of [2 4 1; 0 3 5; 0 0 7]?",
+          options: ["4", "2", "1", "7"],
+          correct_index: 1,
+        },
+        {
+          type: "true_false",
+          statement: "A pivot position can never be in a column that already contains another pivot.",
+          correct_answer: true,
+          explanation: "Each column can have at most one pivot position in reduced echelon form.",
+        },
+        {
+          type: "short_answer",
+          prompt: "Describe how to identify pivot positions after row reducing a matrix.",
+        },
+        {
+          type: "fill_blank",
+          sentence: "The leading entry in each nonzero row is called a ___ and its column is a ___ column.",
+          blanks: ["pivot", "column"],
+        },
+      ],
+    },
   },
   {
     color: "bg-gray-400",
@@ -79,6 +111,7 @@ const STUDENT_ACTIVITY: TimelineEntry[] = [
     xp: 50,
     time: "Yesterday",
     activityId: "act_fy_1",
+    activityType: "feynman",
     studentResponse: "You can swap rows and multiply by constants.",
     feedback: "Partially correct. There are three elementary row operations: row swap, scalar multiplication, and adding a multiple of one row to another. You missed the third.",
     outcome: "did_not_understand",
@@ -92,6 +125,7 @@ const CLASS_ACTIVITY: TimelineEntry[] = [
     xp: 25,
     time: "10m ago",
     activityId: "act_fc_1",
+    activityType: "flashcard",
     studentResponse: "It's a method to solve systems of linear equations by reducing the matrix.",
     feedback: "Good summary! Gaussian elimination systematically reduces a matrix to row echelon form.",
     outcome: "understood",
@@ -102,6 +136,7 @@ const CLASS_ACTIVITY: TimelineEntry[] = [
     xp: 50,
     time: "25m ago",
     activityId: "act_fy_1",
+    activityType: "feynman",
     studentResponse: null,
     feedback: null,
     outcome: "neutral",
@@ -112,6 +147,7 @@ const CLASS_ACTIVITY: TimelineEntry[] = [
     xp: 100,
     time: "1h ago",
     activityId: "act_sc_1",
+    activityType: "scenario",
     studentResponse: "The max flow equals the min cut by the max-flow min-cut theorem.",
     feedback: "Excellent application of the theorem to the network scenario!",
     outcome: "understood",
@@ -122,6 +158,7 @@ const CLASS_ACTIVITY: TimelineEntry[] = [
     xp: 60,
     time: "2h ago",
     activityId: "act_quiz_1",
+    activityType: "quiz",
     studentResponse: "Start from the bottom row and solve for each variable moving upward.",
     feedback: "Correct! Back substitution works upward through the triangular system.",
     outcome: "understood",
@@ -202,13 +239,32 @@ function historyToTimeline(events: HistoryEvent[]): TimelineEntry[] {
     xp: e.xp_awarded,
     time: relativeTime(e.timestamp),
     activityId: e.claim_id,
+    activityType: (e as HistoryEvent & { activity_type?: string }).activity_type ?? "",
     studentResponse: e.student_response,
     feedback: e.feedback,
     outcome: e.outcome,
   }));
 }
 
-export function RightSidebar({ user, onActivityClick, userRole }: RightSidebarProps) {
+function timelineEntryToReview(entry: TimelineEntry, isTeacher: boolean): CompletedActivityReview {
+  const nameMatch = isTeacher ? entry.title.match(/^(\S+\s\S\.?)/) : null;
+  return {
+    id: entry.activityId,
+    activityType: entry.activityType,
+    activityTitle: entry.title,
+    claimTitle: null,
+    topic: null,
+    studentName: nameMatch ? nameMatch[1] : null,
+    studentResponse: entry.studentResponse,
+    feedback: entry.feedback,
+    outcome: entry.outcome,
+    xpAwarded: entry.xp,
+    attemptedAt: null,
+    payload: entry.payload ?? null,
+  };
+}
+
+export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onReviewActivity }: RightSidebarProps) {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   // ── Real data state (falls back to hardcoded) ──────────────────────────────
@@ -334,7 +390,7 @@ export function RightSidebar({ user, onActivityClick, userRole }: RightSidebarPr
               <ArrowLeft className="h-4 w-4" />
             </button>
             <Trophy className="h-4 w-4 text-amber-500" />
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            <p className="font-mono text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
               Leaderboard
             </p>
           </div>
@@ -386,7 +442,7 @@ export function RightSidebar({ user, onActivityClick, userRole }: RightSidebarPr
         <div className="px-5 py-5">
           <div className="flex items-center gap-2">
             <Trophy className="h-4 w-4 text-amber-500" />
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            <p className="font-mono text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
               Class Leaderboard
             </p>
           </div>
@@ -426,7 +482,7 @@ export function RightSidebar({ user, onActivityClick, userRole }: RightSidebarPr
         /* ── Student: XP / Level block ── */
         <div className="px-5 py-5">
           <div className="flex items-start justify-between">
-            <p className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            <p className="font-mono text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
               Level {displayUser.level} Explorer
             </p>
             <button
@@ -470,8 +526,8 @@ export function RightSidebar({ user, onActivityClick, userRole }: RightSidebarPr
 
       {/* Domain mastery */}
       <div className="px-5 py-4">
-        <p className="mb-3 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          {isTeacher ? "Class Mastery" : "Domain Mastery"}
+        <p className="mb-3 font-mono text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+          {isTeacher ? "Class Mastery" : "Axiom Mastery"}
         </p>
         <div className={`space-y-2.5 ${displayMastery.length > 5 ? "max-h-[180px] overflow-y-auto pr-1" : ""}`}>
           {displayMastery.map((d) => (
@@ -497,9 +553,18 @@ export function RightSidebar({ user, onActivityClick, userRole }: RightSidebarPr
 
       {/* Recent activity timeline */}
       <div className="px-5 py-4">
-        <p className="mb-3 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          {isTeacher ? "Class Activity" : "Recent Activity"}
-        </p>
+        {isTeacher ? (
+          <button
+            onClick={() => onTabChange?.("dashboard")}
+            className="mb-3 font-mono text-[11px] font-bold uppercase tracking-widest text-primary hover:underline"
+          >
+            Class Activity →
+          </button>
+        ) : (
+          <p className="mb-3 font-mono text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+            Recent Activity
+          </p>
+        )}
         <div className="space-y-1">
           {recentActivity.map((a, i) => {
             const hasDetail = a.studentResponse || a.feedback;
@@ -507,7 +572,15 @@ export function RightSidebar({ user, onActivityClick, userRole }: RightSidebarPr
             return (
               <div key={i}>
                 <button
-                  onClick={() => hasDetail ? toggleExpand(i) : onActivityClick?.(a.activityId)}
+                  onClick={() => {
+                    if (hasDetail && onReviewActivity) {
+                      onReviewActivity(timelineEntryToReview(a, isTeacher));
+                    } else if (hasDetail) {
+                      toggleExpand(i);
+                    } else {
+                      onActivityClick?.(a.activityId);
+                    }
+                  }}
                   className="flex w-full gap-3 text-left transition-colors hover:opacity-80"
                 >
                   <div className="flex flex-col items-center">

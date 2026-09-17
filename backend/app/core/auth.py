@@ -78,12 +78,17 @@ async def get_current_user(
         token = authorization.removeprefix("Bearer ").strip()
         return _decode_token(token)
 
-    # 2. Demo auth fallback
+    # 2. Demo auth fallback (disabled in production via ENABLE_DEMO_AUTH=false)
     if x_demo_user:
+        if not settings.enable_demo_auth:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Demo authentication is disabled. Use Bearer token auth.",
+            )
         if x_demo_user not in VALID_DEMO_IDS:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Unknown demo user. Use one of: {', '.join(sorted(VALID_DEMO_IDS))}",
+                detail="Unknown demo user.",
             )
         return x_demo_user
 

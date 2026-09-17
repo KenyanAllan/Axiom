@@ -432,6 +432,101 @@ export async function fetchClassroomLeaderboard(
   return res.json();
 }
 
+// ── Activity History ────────────────────────────────────────────────────────
+
+export interface ActivityHistoryItem {
+  id: number;
+  student_id: string;
+  student_name: string;
+  activity_type: string;
+  activity_title: string;
+  claim_title: string | null;
+  outcome: string;
+  student_response: string | null;
+  feedback: string | null;
+  xp_awarded: number;
+  attempted_at: string | null;
+  activity_payload?: Record<string, any> | null;
+}
+
+export interface ActivityHistoryResponse {
+  classroom_id: number;
+  items: ActivityHistoryItem[];
+  total: number;
+}
+
+export async function fetchClassroomActivityHistory(
+  userId: string,
+  classroomId: number,
+  limit: number = 50,
+  offset: number = 0
+): Promise<ActivityHistoryResponse> {
+  const res = await fetch(
+    `${BASE}/api/classrooms/${classroomId}/activity-history?limit=${limit}&offset=${offset}`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`Activity history fetch failed: ${res.status}`);
+  return res.json();
+}
+
+// ── Class Chat History ───────────────────────────────────────────────────────
+
+export interface ClassChatSessionItem {
+  session_id: number;
+  student_name: string;
+  student_id: string;
+  title: string | null;
+  message_count: number;
+  created_at: string | null;
+}
+
+export interface ClassChatHistoryResponse {
+  items: ClassChatSessionItem[];
+  total: number;
+}
+
+export interface ClassChatMessageItem {
+  role: "user" | "assistant";
+  content: string;
+  created_at: string | null;
+}
+
+export interface ClassChatSessionDetail {
+  session_id: number;
+  student_name: string;
+  student_id: string;
+  title: string | null;
+  created_at: string | null;
+  messages: ClassChatMessageItem[];
+}
+
+export async function fetchClassroomChatHistory(
+  userId: string,
+  classroomId: number,
+  limit: number = 50,
+  offset: number = 0
+): Promise<ClassChatHistoryResponse> {
+  const res = await fetch(
+    `${BASE}/api/classrooms/${classroomId}/chat-history?limit=${limit}&offset=${offset}`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`Chat history fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchClassroomChatSession(
+  userId: string,
+  classroomId: number,
+  sessionId: number
+): Promise<ClassChatSessionDetail> {
+  const res = await fetch(
+    `${BASE}/api/classrooms/${classroomId}/chat-history/${sessionId}`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`Chat session fetch failed: ${res.status}`);
+  return res.json();
+}
+
 // ── Glossary ─────────────────────────────────────────────────────────────────
 
 export async function fetchGlossaryTerms(
@@ -465,12 +560,15 @@ export async function createGlossaryTerm(
   userId: string,
   term: string,
   definition: string,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = DEMO_WORKSPACE_ID,
+  sourceDocumentId?: number
 ): Promise<GlossaryTermResponse> {
+  const payload: Record<string, unknown> = { workspace_id: workspaceId, term, definition };
+  if (sourceDocumentId != null) payload.source_document_id = sourceDocumentId;
   const res = await fetch(`${BASE}/api/glossary`, {
     method: "POST",
     headers: headers(userId),
-    body: JSON.stringify({ workspace_id: workspaceId, term, definition }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`Create glossary term failed: ${res.status}`);
   return res.json();

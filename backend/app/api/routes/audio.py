@@ -106,7 +106,7 @@ async def speech_marks(
 
 
 class GenerateAudioOverviewRequest(BaseModel):
-    workspace_id: int = 1
+    workspace_id: int
     topic_ids: list[str] = Field(..., min_length=1, description="One or more topic IDs to include")
     style: Literal["conversational", "narrative", "discussion"] = "conversational"
     user_instruction: str | None = Field(None, max_length=500, description="Optional custom instructions for the script")

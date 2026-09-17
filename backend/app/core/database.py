@@ -5,13 +5,20 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-engine = create_async_engine(
-    settings.database_url,
-    echo=(settings.log_level == "debug"),
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-)
+_engine_kwargs: dict = {
+    "echo": settings.log_level == "debug",
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_pre_ping": True,
+    "pool_recycle": 3600,
+}
+if settings.database_ssl:
+    import ssl as _ssl
+
+    _ssl_ctx = _ssl.create_default_context()
+    _engine_kwargs["connect_args"] = {"ssl": _ssl_ctx}
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
 
 async_session_factory = async_sessionmaker(
     engine,

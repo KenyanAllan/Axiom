@@ -1,43 +1,20 @@
 {
   "pages": {
-    "/_not-found/page": [
-      "static/chunks/webpack-a7ed3e41ffc81b02.js",
-      "static/chunks/4bd1b696-c023c6e3521b1417.js",
-      "static/chunks/255-37e0f0325134c4d7.js",
-      "static/chunks/main-app-bb5851e3d97c9196.js",
-      "static/chunks/app/_not-found/page-09ca0541097c2d97.js"
-    ],
     "/layout": [
-      "static/chunks/webpack-a7ed3e41ffc81b02.js",
-      "static/chunks/4bd1b696-c023c6e3521b1417.js",
-      "static/chunks/255-37e0f0325134c4d7.js",
-      "static/chunks/main-app-bb5851e3d97c9196.js",
-      "static/css/4fe8da64f68338dc.css",
-      "static/chunks/app/layout-3590a09588c43d4f.js"
-    ],
-    "/login/page": [
-      "static/chunks/webpack-a7ed3e41ffc81b02.js",
-      "static/chunks/4bd1b696-c023c6e3521b1417.js",
-      "static/chunks/255-37e0f0325134c4d7.js",
-      "static/chunks/main-app-bb5851e3d97c9196.js",
-      "static/chunks/624-abf77d3f420391e2.js",
-      "static/chunks/app/login/page-c272576bba03ed46.js"
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/css/app/layout.css",
+      "static/chunks/app/layout.js"
     ],
     "/page": [
-      "static/chunks/webpack-a7ed3e41ffc81b02.js",
-      "static/chunks/4bd1b696-c023c6e3521b1417.js",
-      "static/chunks/255-37e0f0325134c4d7.js",
-      "static/chunks/main-app-bb5851e3d97c9196.js",
-      "static/chunks/819-f017e29e0b2ca2de.js",
-      "static/chunks/app/page-b4de1d71743aad26.js"
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/page.js"
     ],
-    "/signup/page": [
-      "static/chunks/webpack-a7ed3e41ffc81b02.js",
-      "static/chunks/4bd1b696-c023c6e3521b1417.js",
-      "static/chunks/255-37e0f0325134c4d7.js",
-      "static/chunks/main-app-bb5851e3d97c9196.js",
-      "static/chunks/624-abf77d3f420391e2.js",
-      "static/chunks/app/signup/page-2a3296ad45667a7e.js"
+    "/login/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/login/page.js"
     ]
   }
 }

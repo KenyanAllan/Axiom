@@ -7,7 +7,6 @@ import {
   Sparkles,
   ArrowUp,
   Bot,
-  User,
   ArrowRight,
   Circle,
   Mic,
@@ -29,11 +28,13 @@ import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import type { Activity } from "@/components/activity/ActivityFeed";
 import { SourceDocsManager } from "@/components/sources/SourceDocsManager";
 import { TeacherDashboard } from "@/components/dashboard/TeacherDashboard";
+import { ClassChatHistory } from "@/components/dashboard/ClassChatHistory";
+import type { CompletedActivityReview } from "@/components/activity/CompletedActivityReviewOverlay";
 import { GlossaryTab } from "@/components/glossary/GlossaryTab";
 import { GlossaryInlineCard } from "@/components/glossary/GlossaryInlineCard";
 import type { UserRole, ViewTab, GraphTopic, GraphEdge } from "@/lib/types";
 import { createChatSession, sendChatMessage, fetchGraph } from "@/lib/api";
-import { SettingsPage } from "@/components/settings/SettingsPage";
+import { SettingsPage, parseAvatar } from "@/components/settings/SettingsPage";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ interface CenterStageProps {
   onWikiPagesChange: (pages: WikiPage[]) => void;
   wikiPageId: string | null;
   onWikiPageSelect: (id: string | null) => void;
-  pendingChatMessage?: string | null;
+  pendingChatMessage?: { text: string; title?: string } | null;
   onPendingChatMessageHandled?: () => void;
   sessions: ChatSession[];
   onSessionsChange: (sessions: ChatSession[] | ((prev: ChatSession[]) => ChatSession[])) => void;
@@ -73,12 +74,18 @@ interface CenterStageProps {
   settings: import("@/hooks/use-settings").AppSettings;
   onUpdateProfile: (patch: Partial<import("@/lib/types").UserProfile>) => void;
   onUpdateSetting: <K extends keyof import("@/hooks/use-settings").AppSettings>(key: K, value: import("@/hooks/use-settings").AppSettings[K]) => void;
+  onReviewActivity?: (review: CompletedActivityReview) => void;
+  onViewSource?: (sourceDocumentId: string) => void;
+  pendingSourceDocId?: string | null;
+  onPendingSourceDocHandled?: () => void;
 }
 
 interface ChatContextItem {
+  type?: "claim" | "activity";
   claimId: string;
   claimTitle: string;
   pageTitle: string;
+  description?: string;
 }
 
 interface ChatMessage {
@@ -97,6 +104,7 @@ export interface WikiClaim {
   title: string;
   description: string;
   anchors: string[];
+  sourceDocumentId?: string | null;
 }
 
 export interface WikiPage {
@@ -125,6 +133,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Gaussian elimination's forward phase systematically creates zeros below each pivot, transforming the augmented matrix into row echelon form.",
         anchors: ["Lay §1.2 p.23", "lecture-03-slides.pdf"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_ge_02",
@@ -132,6 +141,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Once in REF, the system is solved bottom-up by substituting known values into each successive equation.",
         anchors: ["Lay §1.2 p.25"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_ge_03",
@@ -139,6 +149,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Selecting the largest absolute value in each column as pivot keeps multipliers bounded, preventing catastrophic floating-point error amplification.",
         anchors: ["Trefethen & Bau §20", "lecture-04-notes.pdf"],
+        sourceDocumentId: "doc_linear_algebra",
       },
     ],
   },
@@ -156,6 +167,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "The three EROs — row swap, scalar multiplication, and row addition — are the only permitted transformations. Each is reversible.",
         anchors: ["Lay §1.1 p.6"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_rr_02",
@@ -163,6 +175,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Applying any elementary row operation to an augmented matrix produces an equivalent system with the same solution set.",
         anchors: ["Lay §1.1 p.8", "lecture-02-proof.pdf"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_rr_03",
@@ -170,6 +183,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Every matrix has exactly one reduced row echelon form, making RREF a canonical representation for determining solution structure.",
         anchors: ["Lay §1.2 Theorem 1"],
+        sourceDocumentId: "doc_linear_algebra",
       },
     ],
   },
@@ -187,6 +201,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Only square matrices can be invertible, and they must have full rank — every row and column contains a pivot in RREF.",
         anchors: ["Lay §2.2 p.104"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_mi_02",
@@ -194,6 +209,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "To find A⁻¹, augment A with I and row-reduce: [A|I] → [I|A⁻¹]. If A is singular, the left side won't reduce to I.",
         anchors: ["Lay §2.2 p.109", "lecture-06-demo.py"],
+        sourceDocumentId: "doc_linear_algebra",
       },
     ],
   },
@@ -211,6 +227,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "The determinant can be computed by expanding along any row or column, summing the products of entries and their cofactors with alternating signs.",
         anchors: ["Lay §3.1 p.167"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_det_02",
@@ -218,6 +235,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "A square matrix is invertible if and only if its determinant is nonzero. Zero determinant means the column vectors are linearly dependent.",
         anchors: ["Lay §3.2 Theorem 4"],
+        sourceDocumentId: "doc_linear_algebra",
       },
     ],
   },
@@ -235,6 +253,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Closure, associativity, commutativity of addition, existence of zero vector and additive inverses, plus distributive and scalar identity laws.",
         anchors: ["Lay §4.1 p.192"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_vs_02",
@@ -242,6 +261,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "A subset H of V is a subspace if it contains the zero vector and is closed under addition and scalar multiplication.",
         anchors: ["Lay §4.1 p.195"],
+        sourceDocumentId: "doc_linear_algebra",
       },
     ],
   },
@@ -259,6 +279,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Eigenvalues are the roots of det(A − λI) = 0. This polynomial of degree n has at most n roots counting multiplicity.",
         anchors: ["Lay §5.2 p.277"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_eig_02",
@@ -266,6 +287,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "For each eigenvalue λ, the set of all eigenvectors plus the zero vector forms a subspace called the eigenspace.",
         anchors: ["Lay §5.1 p.271"],
+        sourceDocumentId: "doc_linear_algebra",
       },
     ],
   },
@@ -283,6 +305,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "Unlike eigendecomposition, the SVD exists for any m×n matrix, not just square or diagonalizable ones.",
         anchors: ["Lay §7.4 p.408"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_svd_02",
@@ -290,6 +313,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "The best rank-k approximation of A in Frobenius norm is obtained by keeping only the k largest singular values.",
         anchors: ["Lay §7.4 p.414", "pca-connection-notes.pdf"],
+        sourceDocumentId: "doc_linear_algebra",
       },
     ],
   },
@@ -307,6 +331,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "The projection of y onto subspace W with orthonormal basis {u₁,…,uₖ} is proj_W(y) = Σ(y·uᵢ)uᵢ.",
         anchors: ["Lay §6.3 p.341"],
+        sourceDocumentId: "doc_linear_algebra",
       },
       {
         id: "claim_orth_02",
@@ -314,6 +339,7 @@ export const INITIAL_WIKI_PAGES: WikiPage[] = [
         description:
           "The Gram-Schmidt process takes any linearly independent set and produces an orthonormal set spanning the same subspace.",
         anchors: ["Lay §6.4 p.349"],
+        sourceDocumentId: "doc_linear_algebra",
       },
     ],
   },
@@ -430,6 +456,10 @@ export function CenterStage({
   settings,
   onUpdateProfile,
   onUpdateSetting,
+  onReviewActivity,
+  onViewSource,
+  pendingSourceDocId,
+  onPendingSourceDocHandled,
 }: CenterStageProps) {
   const isTeacher = userRole === "teacher";
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
@@ -464,7 +494,7 @@ export function CenterStage({
       if (prev.some((c) => c.claimId === claim.id)) return prev;
       return [
         ...prev,
-        { claimId: claim.id, claimTitle: claim.title, pageTitle },
+        { claimId: claim.id, claimTitle: claim.title, pageTitle, description: claim.description },
       ];
     });
   }, []);
@@ -510,16 +540,22 @@ export function CenterStage({
   );
 
   const sendMessage = useCallback(
-    async (text: string, forceNewSession = false) => {
-      if (!text.trim()) return;
-
+    async (text: string, forceNewSession = false, sessionTitle?: string) => {
+      const contextParts = chatContext.map((c) => {
+        if (c.type === "activity") return c.pageTitle;
+        return `[Axiom — "${c.claimTitle}" from ${c.pageTitle}: ${c.description ?? c.claimTitle}]`;
+      });
+      const contextPrefix = contextParts.join("\n\n");
+      const fullText = contextPrefix ? (text.trim() ? `${contextPrefix}\n\n${text.trim()}` : contextPrefix) : text.trim();
+      if (!fullText) return;
+      const title = sessionTitle ?? text.trim().slice(0, 40);
       let targetSessionId = activeSessionId;
 
       if (forceNewSession || activeTab !== "chat") {
         const localId = `chat_${++_msgId}`;
         const newSession: ChatSession = {
           id: localId,
-          title: text.trim().slice(0, 40),
+          title,
           messages: [],
         };
         onSessionsChange([...sessions, newSession]);
@@ -531,7 +567,7 @@ export function CenterStage({
         try {
           const backendSession = await createChatSession(
             userId,
-            text.trim().slice(0, 40)
+            title
           );
           onSessionsChange((prev: ChatSession[]) =>
             prev.map((s) =>
@@ -555,7 +591,7 @@ export function CenterStage({
             const reply = await sendChatMessage(
               userId,
               backendSession.id,
-              text.trim()
+              fullText
             );
             setMessages((prev) => [
               ...prev,
@@ -604,7 +640,7 @@ export function CenterStage({
 
       if (backendId) {
         try {
-          const reply = await sendChatMessage(userId, backendId, text.trim());
+          const reply = await sendChatMessage(userId, backendId, fullText);
           setMessages((prev) => [
             ...prev,
             {
@@ -640,10 +676,16 @@ export function CenterStage({
 
   useEffect(() => {
     if (pendingChatMessage) {
-      sendMessage(pendingChatMessage, true);
+      const title = pendingChatMessage.title ?? "Activity Discussion";
+      const id = `activity_${Date.now()}`;
+      setChatContext((prev) => {
+        if (prev.some((c) => c.claimId === id)) return prev;
+        return [...prev, { type: "activity", claimId: id, claimTitle: title, pageTitle: pendingChatMessage.text }];
+      });
+      onTabChange("chat");
       onPendingChatMessageHandled?.();
     }
-  }, [pendingChatMessage, sendMessage, onPendingChatMessageHandled]);
+  }, [pendingChatMessage, onTabChange, onPendingChatMessageHandled]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -699,6 +741,7 @@ export function CenterStage({
           <TabsTrigger value="sources" />
           <TabsTrigger value="glossary" />
           <TabsTrigger value="dashboard" />
+          <TabsTrigger value="class-chats" />
           <TabsTrigger value="settings" />
         </TabsList>
 
@@ -716,6 +759,17 @@ export function CenterStage({
 
         <TabsContent value="chat" className="flex-1 overflow-hidden">
           <div className="flex h-full flex-col">
+            {/* Sticky chat title */}
+            {(() => {
+              const currentSession = sessions.find((s) => s.id === activeSessionId);
+              const title = currentSession?.title;
+              return title ? (
+                <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                  <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="truncate text-xl font-bold">{title}</h2>
+                </div>
+              ) : null;
+            })()}
             <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
               {messages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
@@ -727,7 +781,7 @@ export function CenterStage({
                 </div>
               ) : (
                 messages.map((msg) => (
-                  <ChatBubble key={msg.id} message={msg} onTabChange={onTabChange} />
+                  <ChatBubble key={msg.id} message={msg} onTabChange={onTabChange} userAvatar={userProfile.avatar} />
                 ))
               )}
               {isTyping && (
@@ -755,6 +809,7 @@ export function CenterStage({
             onSelectPage={onWikiPageSelect}
             onClaimClick={addClaimContext}
             isTeacher={isTeacher}
+            onViewSource={onViewSource}
           />
         </TabsContent>
 
@@ -763,16 +818,22 @@ export function CenterStage({
         </TabsContent>
 
         <TabsContent value="sources" className="flex-1 overflow-y-auto">
-          <SourceDocsManager userId={userId} userRole={userRole} />
+          <SourceDocsManager userId={userId} userRole={userRole} pendingSourceDocId={pendingSourceDocId} onPendingSourceDocHandled={onPendingSourceDocHandled} />
         </TabsContent>
 
         <TabsContent value="glossary" className="flex-1 overflow-y-auto">
-          <GlossaryTab userId={userId} userRole={userRole} />
+          <GlossaryTab userId={userId} userRole={userRole} onViewSource={onViewSource} />
         </TabsContent>
 
         {isTeacher && (
           <TabsContent value="dashboard" className="flex-1 overflow-y-auto">
-            <TeacherDashboard userId={userId} />
+            <TeacherDashboard userId={userId} onReviewActivity={onReviewActivity} />
+          </TabsContent>
+        )}
+
+        {isTeacher && (
+          <TabsContent value="class-chats" className="flex-1 overflow-y-auto">
+            <ClassChatHistory userId={userId} />
           </TabsContent>
         )}
 
@@ -795,9 +856,15 @@ export function CenterStage({
             {chatContext.map((ctx) => (
               <span
                 key={ctx.claimId}
-                className="inline-flex items-center gap-1.5 rounded-md border bg-primary/5 px-2.5 py-1 text-xs"
+                className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs ${
+                  ctx.type === "activity" ? "bg-amber-50 border-amber-200" : "bg-primary/5"
+                }`}
               >
-                <Paperclip className="h-3 w-3 text-primary" />
+                {ctx.type === "activity" ? (
+                  <MessageSquare className="h-3 w-3 text-amber-600" />
+                ) : (
+                  <Paperclip className="h-3 w-3 text-primary" />
+                )}
                 <span className="max-w-[200px] truncate font-medium">
                   {ctx.claimTitle}
                 </span>
@@ -855,7 +922,7 @@ export function CenterStage({
 
 // ── Chat Bubble ───────────────────────────────────────────────────────────────
 
-function ChatBubble({ message, onTabChange }: { message: ChatMessage; onTabChange?: (tab: ViewTab) => void }) {
+function ChatBubble({ message, onTabChange, userAvatar }: { message: ChatMessage; onTabChange?: (tab: ViewTab) => void; userAvatar?: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -962,8 +1029,11 @@ function ChatBubble({ message, onTabChange }: { message: ChatMessage; onTabChang
             ))}
       </div>
       {isUser && (
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary">
-          <User className="h-4 w-4 text-muted-foreground" />
+        <div
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm leading-none"
+          style={{ backgroundColor: parseAvatar(userAvatar).color }}
+        >
+          {parseAvatar(userAvatar).icon}
         </div>
       )}
     </div>
@@ -979,6 +1049,7 @@ interface DemoWikiTabProps {
   onSelectPage: (id: string | null) => void;
   onClaimClick: (claim: WikiClaim, pageTitle: string) => void;
   isTeacher: boolean;
+  onViewSource?: (sourceDocumentId: string) => void;
 }
 
 type WikiMode =
@@ -995,6 +1066,7 @@ function DemoWikiTab({
   onSelectPage,
   onClaimClick,
   isTeacher,
+  onViewSource,
 }: DemoWikiTabProps) {
   const [mode, setMode] = useState<WikiMode>("view");
   const [editClaimId, setEditClaimId] = useState<string | null>(null);
@@ -1326,7 +1398,7 @@ function DemoWikiTab({
               ))}
             </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">
-              {page.claims.length} atomic claims &middot; Updated{" "}
+              {page.claims.length} axiom{page.claims.length !== 1 ? "s" : ""} &middot; Updated{" "}
               {page.updated}
             </p>
             <div className="mt-5 space-y-4 text-sm leading-relaxed text-foreground/80">
@@ -1334,16 +1406,16 @@ function DemoWikiTab({
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                    Atomic Claims
-                  </p>
+                  <h3 className="text-xl font-bold">
+                    Axioms
+                  </h3>
                   {isTeacher && mode === "view" && (
                     <button
                       onClick={startCreateClaim}
                       className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
                     >
                       <Plus className="h-3 w-3" />
-                      Add Claim
+                      Add Axiom
                     </button>
                   )}
                 </div>
@@ -1372,7 +1444,12 @@ function DemoWikiTab({
                           {claim.anchors.map((anchor) => (
                             <span
                               key={anchor}
-                              className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+                              onClick={claim.sourceDocumentId && onViewSource ? (e) => { e.stopPropagation(); onViewSource(claim.sourceDocumentId!); } : undefined}
+                              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] ${
+                                claim.sourceDocumentId && onViewSource
+                                  ? "bg-primary/10 text-primary cursor-pointer hover:bg-primary/20 transition-colors"
+                                  : "bg-secondary text-muted-foreground"
+                              }`}
                             >
                               <Anchor className="h-2.5 w-2.5" />
                               {anchor}
@@ -1380,7 +1457,7 @@ function DemoWikiTab({
                           ))}
                         </div>
                         <p className="mt-2 text-[10px] italic text-primary">
-                          Click to add to chat context
+                          Discuss in Chat
                         </p>
                       </button>
                       {isTeacher && mode === "view" && (
@@ -1407,8 +1484,8 @@ function DemoWikiTab({
 
                 {page.claims.length === 0 && (
                   <p className="py-4 text-center text-sm text-muted-foreground">
-                    No claims yet.{" "}
-                    {isTeacher && "Click \"Add Claim\" to create one."}
+                    No axioms yet.{" "}
+                    {isTeacher && "Click \"Add Axiom\" to create one."}
                   </p>
                 )}
               </div>
@@ -1425,7 +1502,7 @@ function DemoWikiTab({
     <div className="px-6 py-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold">Wiki</h2>
+          <h2 className="text-xl font-bold">Wiki</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Knowledge base generated from your source documents.
           </p>
@@ -1475,7 +1552,7 @@ function DemoWikiTab({
               </div>
               <div className="shrink-0 text-right">
                 <p className="font-mono text-xs text-muted-foreground">
-                  {wp.claims.length} claims
+                  {wp.claims.length} axiom{wp.claims.length !== 1 ? "s" : ""}
                 </p>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
                   {wp.updated}
@@ -1581,7 +1658,7 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
     <div className="px-6 py-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold">Knowledge Node Map</h2>
+          <h2 className="text-xl font-bold">Knowledge Node Map</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Topic dependency graph. Scroll to zoom, drag to pan. Click a node to view its wiki page.
           </p>

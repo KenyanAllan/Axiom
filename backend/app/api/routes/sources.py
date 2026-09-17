@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.tables import AtomicClaim, SourceDocument, User, Workspace
 from app.services.s3 import generate_upload_url, generate_download_url, delete_object
@@ -113,8 +114,14 @@ async def upload_source_direct(
     content_type = file.content_type or "application/octet-stream"
     s3_key = f"sources/{workspace_id}/{uuid4()}/{file.filename}"
 
-    # Read file content
-    content = await file.read()
+    # Read file content with size limit
+    _settings = get_settings()
+    content = await file.read(_settings.upload_max_bytes + 1)
+    if len(content) > _settings.upload_max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {_settings.upload_max_bytes // (1024 * 1024)} MB.",
+        )
     size_bytes = len(content)
 
     # Try to upload to S3
@@ -220,20 +227,25 @@ async def register_source(
     await db.refresh(doc)
 
     # Kick off async ingestion pipeline via Celery
-    from app.workers.celery_app import ingest_source_document_task
+    try:
+        from app.workers.celery_app import ingest_source_document_task
 
-    ingest_source_document_task.delay(
-        source_doc_id=doc.id,
-        workspace_id=doc.workspace_id,
-        s3_key=doc.s3_key,
-        filename=doc.filename,
-        content_type=doc.content_type,
-    )
-    logger.info(
-        "Registered source document id=%s, workspace=%s — ingestion queued",
-        doc.id,
-        doc.workspace_id,
-    )
+        ingest_source_document_task.delay(
+            source_doc_id=doc.id,
+            workspace_id=doc.workspace_id,
+            s3_key=doc.s3_key,
+            filename=doc.filename,
+            content_type=doc.content_type,
+        )
+        logger.info(
+            "Registered source document id=%s, workspace=%s — ingestion queued",
+            doc.id,
+            doc.workspace_id,
+        )
+    except Exception:
+        logger.warning(
+            "Celery not available — ingestion skipped for doc %s", doc.id
+        )
 
     return SourceResponse.model_validate(doc)
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import get_settings
 from app.core.database import Base
 from app.models.tables import AtomicClaim, Topic, TopicPrerequisite, User, UserMastery, Workspace
+from app.api.routes.auth import random_avatar
 
 settings = get_settings()
 engine = create_engine(settings.sync_database_url, echo=True)
@@ -26,6 +27,7 @@ def seed():
             display_name="Demo Student",
             email="student@demo.axiom",
             role="student",
+            avatar=random_avatar(),
             xp=0, level=1, streak_days=0,
         ))
         db.merge(User(
@@ -33,6 +35,7 @@ def seed():
             display_name="Demo Teacher",
             email="teacher@demo.axiom",
             role="teacher",
+            avatar=random_avatar(),
             xp=0, level=1, streak_days=0,
         ))
         db.merge(User(
@@ -40,6 +43,7 @@ def seed():
             display_name="Demo Learner",
             email="learner@demo.axiom",
             role="individual_learner",
+            avatar=random_avatar(),
             xp=0, level=1, streak_days=0,
         ))
 
@@ -133,4 +137,7 @@ def seed():
 
 
 if __name__ == "__main__":
-    seed()
+    if not settings.run_seed_on_startup:
+        print("Seed skipped: RUN_SEED_ON_STARTUP is false.")
+    else:
+        seed()

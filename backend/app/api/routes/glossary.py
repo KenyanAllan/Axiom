@@ -118,6 +118,7 @@ async def create_glossary_term(
         workspace_id=body.workspace_id,
         term=body.term,
         definition=body.definition,
+        source_document_id=body.source_document_id,
         is_auto_extracted=False,
         embedding=embedding,
     )

@@ -12,6 +12,7 @@ class GlossaryTermCreate(BaseModel):
     workspace_id: int
     term: str = Field(..., min_length=1, max_length=200)
     definition: str = Field(..., min_length=1, max_length=5000)
+    source_document_id: int | None = None
 
 
 class GlossaryTermUpdate(BaseModel):

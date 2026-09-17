@@ -290,4 +290,5 @@ export type ViewTab =
   | "sources"
   | "glossary"
   | "dashboard"
+  | "class-chats"
   | "settings";

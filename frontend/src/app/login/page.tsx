@@ -44,14 +44,14 @@ export default function LoginPage() {
       <div className="w-full max-w-md space-y-8 px-6">
         {/* Header */}
         <div className="text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">
+          <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-3xl bg-primary text-4xl font-bold text-primary-foreground">
             Ax
           </div>
-          <h1 className="mt-4 text-2xl font-bold tracking-tight">
-            Sign in to Axiom
+          <h1 className="mt-6 text-6xl font-bold tracking-tight">
+            Axiom
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Technical Learning Workspace
+          <p className="mt-3 text-base text-muted-foreground">
+            Sign in to your Technical Learning Workbench
           </p>
         </div>
 

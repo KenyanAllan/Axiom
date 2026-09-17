@@ -62,17 +62,18 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
   return (
     <>
       <aside
-        className={`flex shrink-0 flex-col border-r bg-background transition-all duration-200 ${
+        className={`flex shrink-0 flex-col border-r transition-all duration-200 ${
           collapsed ? "w-[52px]" : "w-[220px]"
         }`}
+        style={{ backgroundColor: "hsl(var(--sidebar))", color: "hsl(var(--sidebar-foreground))", borderColor: "hsl(var(--sidebar-border))" }}
       >
         {/* Brand */}
-        <div className={`flex items-center ${collapsed ? "justify-center px-0" : "gap-3 px-4"} py-3`}>
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-primary text-xs font-bold text-primary-foreground">
+        <div className={`flex items-center ${collapsed ? "justify-center px-0" : "gap-3 px-4"} py-4`}>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
             Ax
           </div>
           {!collapsed && (
-            <span className="font-mono text-sm font-semibold tracking-tight">
+            <span className="font-mono text-lg font-bold tracking-tight">
               Axiom
             </span>
           )}
@@ -118,11 +119,11 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
                 <span className="absolute -right-0.5 bottom-0 h-3 w-3 rounded-full border-2 border-background bg-emerald-500" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{user.display_name}</p>
-                <p className="font-mono text-[11px] font-medium uppercase tracking-wide text-primary">
+                <p className="truncate text-base font-bold">{user.display_name}</p>
+                <p className="font-mono text-xs font-semibold uppercase tracking-wide text-primary">
                   {user.role}
                 </p>
-                <p className="font-mono text-[10px] text-muted-foreground">
+                <p className="font-mono text-[11px]" style={{ color: "hsl(var(--sidebar-muted))" }}>
                   Lvl {user.level}
                 </p>
               </div>
@@ -130,12 +131,12 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
           )}
         </div>
 
-        <Separator />
+        <div style={{ borderColor: "hsl(var(--sidebar-border))" }} className="border-t" />
 
         {/* Workbench nav */}
         <div className={`overflow-y-auto py-3 ${collapsed ? "px-1.5" : "px-3"}`}>
           {!collapsed && (
-            <p className="mb-2 px-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            <p className="mb-2 px-2 font-mono text-[11px] font-bold uppercase tracking-widest" style={{ color: "hsl(var(--sidebar-muted))" }}>
               Workbenches
             </p>
           )}
@@ -150,9 +151,10 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
                     : "gap-2.5 px-2 py-1.5"
                 } text-sm ${
                   ws.id === activeId
-                    ? `${collapsed ? "" : "border-l-2 border-primary"} bg-primary/5 font-medium text-foreground`
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    ? `${collapsed ? "" : "border-l-2 border-primary"} bg-primary/10 font-medium`
+                    : "hover:bg-primary/5"
                 }`}
+                style={ws.id !== activeId ? { color: "hsl(var(--sidebar-muted))" } : undefined}
                 title={collapsed ? ws.title : undefined}
               >
                 <BookOpen className="h-4 w-4 shrink-0" />
@@ -164,11 +166,12 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
           {/* New Workbench button */}
           <button
             onClick={() => setShowModal(true)}
-            className={`mt-2 flex w-full items-center rounded-md border border-dashed text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground ${
+            className={`mt-2 flex w-full items-center rounded-md border border-dashed text-sm transition-colors hover:border-primary hover:text-primary ${
               collapsed
                 ? "justify-center px-0 py-2"
                 : "gap-2 px-2 py-1.5"
             }`}
+            style={{ color: "hsl(var(--sidebar-muted))", borderColor: "hsl(var(--sidebar-border))" }}
             title={collapsed ? "New Workbench" : undefined}
           >
             <Plus className="h-4 w-4 shrink-0" />
@@ -177,10 +180,11 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
         </div>
 
         {/* Collapse toggle — immediately below workbenches */}
-        <div className={`flex items-center border-t ${collapsed ? "justify-center px-0" : "justify-end px-3"} py-1.5`}>
+        <div className={`flex items-center ${collapsed ? "justify-center px-0" : "justify-end px-3"} py-1.5`} style={{ borderColor: "hsl(var(--sidebar-border))" }}>
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-primary/10"
+            style={{ color: "hsl(var(--sidebar-muted))" }}
             title={collapsed ? "Expand panel" : "Collapse panel"}
           >
             {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
@@ -196,9 +200,10 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
             onClick={onToggleStudentView}
             className={`flex items-center border-t text-sm transition-colors ${
               studentView
-                ? "bg-amber-50 font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-400"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                ? "bg-amber-500/10 font-medium text-amber-600 dark:text-amber-400"
+                : "hover:bg-primary/5"
             } ${collapsed ? "justify-center py-2.5" : "gap-2.5 px-5 py-2.5"}`}
+            style={{ borderColor: "hsl(var(--sidebar-border))", ...(!studentView ? { color: "hsl(var(--sidebar-muted))" } : {}) }}
             title={collapsed ? (studentView ? "Exit Student View" : "Student View") : undefined}
           >
             {studentView ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -211,9 +216,10 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
           onClick={() => onTabChange("settings")}
           className={`flex items-center border-t text-sm transition-colors ${
             activeTab === "settings"
-              ? "bg-primary/5 font-medium text-foreground"
-              : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              ? "bg-primary/10 font-medium"
+              : "hover:bg-primary/5"
           } ${collapsed ? "justify-center py-2.5" : "gap-2.5 px-5 py-2.5"}`}
+          style={{ borderColor: "hsl(var(--sidebar-border))", ...(activeTab !== "settings" ? { color: "hsl(var(--sidebar-muted))" } : {}) }}
           title={collapsed ? "Settings" : undefined}
         >
           <Settings className="h-4 w-4" />
@@ -222,9 +228,10 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
 
         <button
           onClick={onLogout}
-          className={`flex items-center border-t text-sm text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 ${
+          className={`flex items-center border-t text-sm transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400 ${
             collapsed ? "justify-center py-2.5" : "gap-2.5 px-5 py-2.5"
           }`}
+          style={{ color: "hsl(var(--sidebar-muted))", borderColor: "hsl(var(--sidebar-border))" }}
           title={collapsed ? "Sign Out" : undefined}
         >
           <LogOut className="h-4 w-4" />

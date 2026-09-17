@@ -657,9 +657,11 @@ function DocumentViewer({
 interface SourceDocsManagerProps {
   userId: string;
   userRole: UserRole;
+  pendingSourceDocId?: string | null;
+  onPendingSourceDocHandled?: () => void;
 }
 
-export function SourceDocsManager({ userId, userRole }: SourceDocsManagerProps) {
+export function SourceDocsManager({ userId, userRole, pendingSourceDocId, onPendingSourceDocHandled }: SourceDocsManagerProps) {
   const canUpload = userRole !== "student";
   const canDelete = userRole !== "student";
   const [docs, setDocs] = useState<SourceDocument[]>(INITIAL_DOCS);
@@ -707,6 +709,21 @@ export function SourceDocsManager({ userId, userRole }: SourceDocsManagerProps) 
       }
     };
   }, [docs, fetchDocs]);
+
+  // ── Auto-select a doc when navigated from a claim/glossary source link ──
+
+  useEffect(() => {
+    if (!pendingSourceDocId) return;
+    const match =
+      docs.find((d) => d.id === pendingSourceDocId) ??
+      docs.find((d) => d.id === String(pendingSourceDocId)) ??
+      // Numeric IDs from backend map to demo docs by 1-based index
+      (/^\d+$/.test(pendingSourceDocId) ? docs[Number(pendingSourceDocId) - 1] : undefined);
+    if (match) {
+      setSelectedDoc(match);
+      onPendingSourceDocHandled?.();
+    }
+  }, [pendingSourceDocId, docs, onPendingSourceDocHandled]);
 
   // ── Upload handler ──────────────────────────────────────────────────────
 
@@ -772,6 +789,10 @@ export function SourceDocsManager({ userId, userRole }: SourceDocsManagerProps) 
 
   return (
     <div className="space-y-6 px-6 py-5">
+      <div>
+        <h2 className="text-xl font-bold">Source Documents</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Upload and manage your learning materials.</p>
+      </div>
       {/* Upload zone — teachers & individual learners only */}
       {canUpload && (
         <div

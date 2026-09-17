@@ -10,10 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
+from sqlalchemy import func
+from sqlalchemy.orm import selectinload
+
 from app.models.tables import (
     Classroom,
     ClassroomStudent,
+    ChatSession,
+    ChatMessage,
     User,
+    Workspace,
 )
 from app.schemas.classrooms import (
     ClassroomCreate,
@@ -32,6 +38,7 @@ from app.services.classroom import (
     get_classroom_detail,
     get_diagnostic,
     get_student_progress,
+    get_classroom_activity_history,
     broadcast_activity_to_class,
 )
 
@@ -216,6 +223,29 @@ async def broadcast_activity(
     return {"status": "broadcast", "activity_id": body.activity_id}
 
 
+# ── GET /api/classrooms/{id}/activity-history ────────────────────────────────
+
+
+@router.get("/{classroom_id}/activity-history")
+async def classroom_activity_history(
+    classroom_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get chronological activity history for all students in a classroom (teacher only)."""
+    await _require_teacher(user_id, db)
+    try:
+        result = await get_classroom_activity_history(
+            db=db, teacher_id=user_id, classroom_id=classroom_id,
+            limit=limit, offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return result
+
+
 # ── GET /api/classrooms/{id}/leaderboard ─────────────────────────────────────
 
 
@@ -271,3 +301,108 @@ async def classroom_leaderboard(
         )
         for idx, s in enumerate(students)
     ]
+
+
+# ── GET /api/classrooms/{id}/chat-history ─────────────────────────────────────
+
+
+@router.get("/{classroom_id}/chat-history")
+async def classroom_chat_history(
+    classroom_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all chat sessions from students in a classroom (teacher only)."""
+    await _require_teacher(user_id, db)
+
+    classroom = await db.get(Classroom, classroom_id)
+    if classroom is None:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+    if classroom.teacher_id != user_id:
+        raise HTTPException(status_code=403, detail="You do not own this classroom")
+
+    msg_count = (
+        select(func.count(ChatMessage.id))
+        .where(ChatMessage.session_id == ChatSession.id)
+        .correlate(ChatSession)
+        .scalar_subquery()
+    )
+
+    stmt = (
+        select(ChatSession, User.display_name, msg_count.label("message_count"))
+        .join(Workspace, ChatSession.workspace_id == Workspace.id)
+        .join(User, ChatSession.user_id == User.id)
+        .where(Workspace.classroom_id == classroom_id)
+        .order_by(ChatSession.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+
+    return {
+        "items": [
+            {
+                "session_id": row.ChatSession.id,
+                "student_name": row.display_name,
+                "student_id": row.ChatSession.user_id,
+                "title": row.ChatSession.title,
+                "message_count": row.message_count or 0,
+                "created_at": row.ChatSession.created_at.isoformat() if row.ChatSession.created_at else None,
+            }
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
+# ── GET /api/classrooms/{id}/chat-history/{session_id} ───────────────────────
+
+
+@router.get("/{classroom_id}/chat-history/{session_id}")
+async def classroom_chat_session_detail(
+    classroom_id: int,
+    session_id: int,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get full conversation for a student chat session (teacher only)."""
+    await _require_teacher(user_id, db)
+
+    classroom = await db.get(Classroom, classroom_id)
+    if classroom is None:
+        raise HTTPException(status_code=404, detail="Classroom not found")
+    if classroom.teacher_id != user_id:
+        raise HTTPException(status_code=403, detail="You do not own this classroom")
+
+    stmt = (
+        select(ChatSession)
+        .options(selectinload(ChatSession.messages))
+        .join(Workspace, ChatSession.workspace_id == Workspace.id)
+        .where(
+            ChatSession.id == session_id,
+            Workspace.classroom_id == classroom_id,
+        )
+    )
+    session = (await db.execute(stmt)).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    student = await db.get(User, session.user_id)
+
+    return {
+        "session_id": session.id,
+        "student_name": student.display_name if student else "Unknown",
+        "student_id": session.user_id,
+        "title": session.title,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "messages": [
+            {
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in session.messages
+        ],
+    }

@@ -94,7 +94,7 @@ async def would_create_cycle(
 
 @router.get("/topics", response_model=list[TopicSummary])
 async def list_topics(
-    workspace_id: int = Query(1, description="Filter by workspace ID"),
+    workspace_id: int = Query(..., description="Filter by workspace ID"),
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[TopicSummary]:

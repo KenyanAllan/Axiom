@@ -26,6 +26,8 @@ import {
   MicOff,
   Bot,
   MessageSquare,
+  Play,
+  Pause,
 } from "lucide-react";
 import { evaluateResponse, submitAttempt, generateAudioOverview } from "@/lib/api";
 import type { WikiPage } from "@/components/layout/CenterStage";
@@ -413,7 +415,7 @@ export function ActivityFeed({
     <div className="space-y-2 px-6 py-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold">Activity Feed</h2>
+          <h2 className="text-xl font-bold">Activity Feed</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Your pending learning activities. Click to expand.
           </p>
@@ -1531,13 +1533,22 @@ function FeynmanActivity({ activity, onDiscussWithTutor, onSaveResult }: Rendere
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const;
 
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const [response, setResponse] = useState(activity.lastResponse ?? "");
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
   const p = activity.payload ?? {};
   const draftRef = useRef(response);
   draftRef.current = response;
@@ -1555,31 +1566,54 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
     };
   }, []);
 
+  const initAudio = () => {
+    if (audioRef.current) return audioRef.current;
+    const audio = new Audio(p.audio_url);
+    audio.onended = () => { setIsPlaying(false); setCurrentTime(0); };
+    audio.onerror = () => { setIsPlaying(false); };
+    audio.onloadedmetadata = () => { setDuration(audio.duration); };
+    audio.ontimeupdate = () => { setCurrentTime(audio.currentTime); };
+    audioRef.current = audio;
+    return audio;
+  };
+
   const handleListen = () => {
     if (p.audio_url) {
-      if (!audioRef.current) {
-        audioRef.current = new Audio(p.audio_url);
-        audioRef.current.onended = () => setIsPlaying(false);
-        audioRef.current.onerror = () => setIsPlaying(false);
-      }
-      audioRef.current.playbackRate = playbackRate;
-      audioRef.current.play();
+      const audio = initAudio();
+      audio.playbackRate = playbackRate;
+      audio.play();
       setIsPlaying(true);
     } else if ("speechSynthesis" in window && p.summary) {
-      const utter = new SpeechSynthesisUtterance(p.summary);
-      utter.rate = playbackRate;
-      utter.onend = () => setIsPlaying(false);
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      } else {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(p.summary);
+        utter.rate = playbackRate;
+        utter.onend = () => setIsPlaying(false);
+        window.speechSynthesis.speak(utter);
+      }
       setIsPlaying(true);
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utter);
     }
   };
 
-  const handleStop = () => {
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
-    window.speechSynthesis.cancel();
+  const handlePause = () => {
+    if (audioRef.current) { audioRef.current.pause(); }
+    if (window.speechSynthesis.speaking) { window.speechSynthesis.pause(); }
     setIsPlaying(false);
   };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current || !duration) return;
+    const bar = progressBarRef.current;
+    if (!bar) return;
+    const rect = bar.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audioRef.current.currentTime = ratio * duration;
+    setCurrentTime(audioRef.current.currentTime);
+  };
+
+  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   const handleSubmit = async () => {
     if (!response.trim() || isLoading) return;
@@ -1608,41 +1642,56 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between rounded-lg border bg-secondary/20 p-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Mini Podcast
-          </p>
-          <p className="mt-1 text-sm font-medium">{activity.topic}</p>
-        </div>
-        <button
-          onClick={isPlaying ? handleStop : handleListen}
-          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-            isPlaying
-              ? "bg-red-100 text-red-700 hover:bg-red-200"
-              : "bg-teal-100 text-teal-700 hover:bg-teal-200"
-          }`}
-        >
-          <Headphones className="h-4 w-4" />
-          {isPlaying ? "Stop" : "Listen"}
-        </button>
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">Speed</span>
-        <div className="flex gap-1">
-          {SPEED_OPTIONS.map((speed) => (
-            <button
-              key={speed}
-              onClick={() => setPlaybackRate(speed)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                playbackRate === speed
-                  ? "bg-teal-100 text-teal-700"
-                  : "text-muted-foreground hover:bg-accent"
-              }`}
+      <div className="rounded-lg border bg-secondary/20 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Mini Podcast
+        </p>
+        <p className="mt-1 text-sm font-medium">{activity.topic}</p>
+
+        <div className="mt-3 flex items-center gap-3">
+          <button
+            onClick={isPlaying ? handlePause : handleListen}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white shadow-sm transition-colors hover:bg-teal-700"
+          >
+            {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
+          </button>
+
+          <div className="min-w-0 flex-1 space-y-1">
+            <div
+              ref={progressBarRef}
+              onClick={handleSeek}
+              className="group relative h-1.5 cursor-pointer rounded-full bg-muted"
             >
-              {speed}x
-            </button>
-          ))}
+              <div
+                className="absolute inset-y-0 left-0 rounded-full bg-teal-500 transition-[width] duration-150"
+                style={{ width: `${progressPercent}%` }}
+              />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 h-3 w-3 rounded-full border-2 border-teal-500 bg-background opacity-0 shadow-sm transition-opacity group-hover:opacity-100"
+                style={{ left: `calc(${progressPercent}% - 6px)` }}
+              />
+            </div>
+            <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
+              <span>{formatTime(currentTime)}</span>
+              <span>{duration > 0 ? formatTime(duration) : "--:--"}</span>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 gap-0.5">
+            {SPEED_OPTIONS.map((speed) => (
+              <button
+                key={speed}
+                onClick={() => setPlaybackRate(speed)}
+                className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                  playbackRate === speed
+                    ? "bg-teal-100 text-teal-700"
+                    : "text-muted-foreground hover:bg-accent"
+                }`}
+              >
+                {speed}x
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <details className="group rounded-lg border">
