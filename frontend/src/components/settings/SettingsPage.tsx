@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Check,
   RefreshCw,
+  Globe,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import type { UserProfile } from "@/lib/types";
@@ -444,6 +445,38 @@ export function SettingsPage({ user, settings, onUpdateProfile, onUpdateSetting 
               {LANG_OPTIONS.map((l) => (
                 <option key={l.value} value={l.value}>{l.label}</option>
               ))}
+            </select>
+          </div>
+
+          {/* Tutor language */}
+          <div className="px-5 py-4">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <Globe className="h-4 w-4 text-muted-foreground" /> Tutor Response Language
+            </label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The AI tutor will respond in this language. Technical terms are preserved via Custom Terminology.
+            </p>
+            <select
+              value={user.preferred_language ?? "en"}
+              onChange={(e) => {
+                const lang = e.target.value;
+                onUpdateProfile({ preferred_language: lang });
+                updateUserProfile(user.id, { preferred_language: lang }).catch((err) =>
+                  console.error("SettingsPage: failed to update language:", err)
+                );
+              }}
+              className="mt-2 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+            >
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="ja">Japanese</option>
+              <option value="zh">Chinese (Simplified)</option>
+              <option value="pt">Portuguese</option>
+              <option value="ko">Korean</option>
+              <option value="ar">Arabic</option>
+              <option value="hi">Hindi</option>
             </select>
           </div>
         </div>

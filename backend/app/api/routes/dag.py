@@ -31,6 +31,7 @@ class FrontierItem(BaseModel):
     title: str | None
     claim_count: int
     mastered_count: int
+    complexity_score: float | None = None
 
 
 class TopicOrderItem(BaseModel):
@@ -56,6 +57,7 @@ class GraphTopic(BaseModel):
     title: str | None
     claim_count: int
     mastered_count: int
+    complexity_score: float | None = None
 
 
 class GraphEdge(BaseModel):
@@ -73,6 +75,7 @@ SELECT
     t.id AS topic_id,
     t.slug,
     t.title,
+    t.complexity_score,
     COUNT(ac.id)::int AS claim_count,
     COUNT(um.claim_id) FILTER (WHERE um.status = 'mastered')::int AS mastered_count
 FROM topics t
@@ -80,7 +83,7 @@ LEFT JOIN atomic_claims ac ON ac.topic_id = t.id
 LEFT JOIN user_mastery um
     ON um.claim_id = ac.id AND um.user_id = :user_id
 WHERE t.workspace_id = :workspace_id
-GROUP BY t.id, t.slug, t.title
+GROUP BY t.id, t.slug, t.title, t.complexity_score
 ORDER BY t.title ASC
 """)
 
@@ -105,6 +108,7 @@ async def graph(
                 title=r.title,
                 claim_count=r.claim_count,
                 mastered_count=r.mastered_count,
+                complexity_score=r.complexity_score,
             )
         )
 

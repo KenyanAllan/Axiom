@@ -15,6 +15,7 @@ import {
   Headphones,
   FileIcon,
   Video,
+  Image as ImageIcon,
 } from "lucide-react";
 import type { SourceDocument, UserRole } from "@/lib/types";
 import {
@@ -436,9 +437,16 @@ function isVideoType(ct: string, filename: string): boolean {
   return ["mp4", "webm"].includes(ext);
 }
 
+function isImageType(ct: string, filename: string): boolean {
+  if (ct.startsWith("image/")) return true;
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  return ["png", "jpg", "jpeg", "tiff", "tif", "bmp", "gif", "heic"].includes(ext);
+}
+
 function getDocIcon(doc: SourceDocument) {
   if (isAudioType(doc.content_type, doc.filename)) return Headphones;
   if (isVideoType(doc.content_type, doc.filename)) return Video;
+  if (isImageType(doc.content_type, doc.filename)) return ImageIcon;
   if (isPdfType(doc.content_type, doc.filename)) return FileIcon;
   return FileText;
 }
@@ -468,6 +476,7 @@ function DocumentViewer({
   const isPdf = isPdfType(ct, fname);
   const isAudio = isAudioType(ct, fname);
   const isVideo = isVideoType(ct, fname);
+  const isImage = isImageType(ct, fname);
 
   useEffect(() => {
     let cancelled = false;
@@ -570,6 +579,19 @@ function DocumentViewer({
           <pre className="max-h-[600px] overflow-auto whitespace-pre-wrap break-words p-5 font-mono text-sm leading-relaxed">
             {textContent}
           </pre>
+        </div>
+      ) : isImage && viewUrl ? (
+        <div className="rounded-lg border bg-card">
+          <div className="border-b px-4 py-2">
+            <span className="text-xs font-medium text-muted-foreground">Image Preview</span>
+          </div>
+          <div className="flex items-center justify-center p-5">
+            <img
+              src={viewUrl}
+              alt={fname}
+              className="max-h-[600px] max-w-full rounded object-contain"
+            />
+          </div>
         </div>
       ) : isPdf && (viewUrl || isDemo) ? (
         <PdfViewer url={viewUrl} filename={doc.filename} isDemo={isDemo} />
@@ -823,12 +845,12 @@ export function SourceDocsManager({ userId, userRole, pendingSourceDocId, onPend
             </button>
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Supports .md, .txt, .pdf, and audio files. Max 10 MB per file.
+            Supports .md, .txt, .pdf, audio, and image files. Max 10 MB per file.
           </p>
           <input
             ref={fileRef}
             type="file"
-            accept=".md,.mdx,.txt,.pdf,.mp3,.mp4,.wav,.ogg,.flac,.webm,.m4a"
+            accept=".md,.mdx,.txt,.pdf,.mp3,.mp4,.wav,.ogg,.flac,.webm,.m4a,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.heic"
             multiple
             onChange={(e) => handleUpload(e.target.files)}
             className="hidden"

@@ -37,6 +37,7 @@ class User(Base):
     level = Column(Integer, nullable=False, default=1)
     streak_days = Column(Integer, nullable=False, default=0)
     last_active_date = Column(Date, nullable=True)
+    preferred_language = Column(String, nullable=True, default="en")
 
     masteries = relationship("UserMastery", back_populates="user", lazy="selectin")
     workspaces = relationship("Workspace", back_populates="owner", lazy="selectin")
@@ -161,6 +162,7 @@ class Topic(Base):
     title = Column(String, nullable=False)
     summary = Column(Text)
     embedding = Column(Vector(1024))
+    complexity_score = Column(Float, nullable=True)
 
     workspace = relationship("Workspace", back_populates="topics")
     claims = relationship("AtomicClaim", back_populates="topic", lazy="selectin")
@@ -204,6 +206,9 @@ class AtomicClaim(Base):
     flawed_snippet = Column(Text)
     rubric = Column(Text)
     embedding = Column(Vector(1024))
+    original_language = Column(String, nullable=True)
+    original_content = Column(Text, nullable=True)
+    complexity_score = Column(Float, nullable=True)
 
     topic = relationship("Topic", back_populates="claims")
     source_document = relationship("SourceDocument")
@@ -228,6 +233,8 @@ class GlossaryTerm(Base):
     source_ref = Column(JSONB, nullable=True)
     is_auto_extracted = Column(Boolean, nullable=False, default=True)
     embedding = Column(Vector(1024))
+    original_language = Column(String, nullable=True)
+    original_definition = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -350,6 +357,7 @@ class ActivityAttempt(Base):
     )
     outcome = Column(String, nullable=False)  # understood | did_not_understand | neutral
     student_response = Column(Text, nullable=True)
+    response_image_s3_key = Column(String, nullable=True)
     feedback = Column(Text, nullable=True)
     hints_used = Column(Boolean, nullable=False, default=False)
     difficulty = Column(Integer, nullable=False, default=1)
@@ -401,6 +409,7 @@ class ChatMessage(Base):
     role = Column(String, nullable=False)  # user | assistant
     content = Column(Text, nullable=False)
     sources = Column(JSONB, nullable=True)
+    image_s3_keys = Column(JSONB, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

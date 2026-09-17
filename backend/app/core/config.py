@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # ── Amazon Textract ─────────────────────────────────────────────────────────
     textract_output_bucket: str = "axiom-textract-results"
 
+    # ── Amazon Translate (multilingual) ────────────────────────────────────────
+    translate_terminology_name: str = "axiom-stem-terms"
+
+    # ── Amazon Comprehend (difficulty estimation) ──────────────────────────────
+    comprehend_language_code: str = "en"
+
     # ── JWT Auth ────────────────────────────────────────────────────────────────
     jwt_secret_key: str = "CHANGE-ME-to-a-random-64-char-string"
     jwt_algorithm: str = "HS256"

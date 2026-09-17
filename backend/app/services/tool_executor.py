@@ -68,7 +68,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "create_activities_for_claim",
         "description": (
             "Create practice activities for a specific atomic claim. Available types: "
-            "flashcard, true_false, multi_choice, fill_blank, wrong_on_purpose, feynman. "
+            "flashcard, true_false, multi_choice, fill_blank, wrong_on_purpose, feynman, "
+            "visual_sketch, visual_label, visual_proof. "
             "For teachers, activities are automatically shared with all students in the "
             "classroom. For students, activities are added to their personal practice queue."
         ),
@@ -84,9 +85,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "enum": ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman"],
+                            "enum": ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof"],
                         },
-                        "description": "Which activity types to generate. Defaults to all six.",
+                        "description": "Which activity types to generate. Defaults to all nine.",
                     },
                 },
                 "required": ["claim_id"],
@@ -373,7 +374,7 @@ async def _tool_create_activities(
     if claim is None:
         return {"error": f"Claim '{claim_id}' not found"}
 
-    types = tool_input.get("types", ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman"])
+    types = tool_input.get("types", ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof"])
 
     activities = await generate_basic_activities(
         db=db,
@@ -524,6 +525,7 @@ async def _tool_mastery(
             "claim_title": c.title,
             "understanding_rating": m.understanding_rating if m else 1,
             "status": m.status if m else "unseen",
+            "complexity_score": c.complexity_score,
         })
 
     mastered = sum(1 for i in items if i["status"] == "mastered")

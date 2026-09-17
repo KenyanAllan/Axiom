@@ -16,7 +16,10 @@ export type ActivityType =
   | "scenario"
   | "feynman"
   | "mini_podcast"
-  | "quiz";
+  | "quiz"
+  | "visual_sketch"
+  | "visual_label"
+  | "visual_proof";
 
 export interface UserProfile {
   id: string;
@@ -28,6 +31,7 @@ export interface UserProfile {
   email?: string;
   avatar?: string;
   password?: string;
+  preferred_language?: string;
 }
 
 export interface ClaimCard {
@@ -71,6 +75,7 @@ export interface AttemptCreate {
   claim_id?: string;
   hints_used?: boolean;
   student_response: string;
+  response_image_s3_key?: string;
 }
 
 export interface AttemptResult {
@@ -85,6 +90,9 @@ export interface AttemptResult {
   total_xp: number;
   level: number;
   streak_days: number;
+  response_image_url?: string | null;
+  rekognition_labels?: Record<string, any>[] | null;
+  structural_check?: boolean | null;
 }
 
 export interface QueueEntryResponse {
@@ -131,6 +139,7 @@ export interface FrontierTopic {
   title: string;
   claim_count: number;
   mastered_count: number;
+  complexity_score?: number | null;
 }
 
 export interface FrontierResponse {
@@ -145,6 +154,7 @@ export interface GraphTopic {
   title: string | null;
   claim_count: number;
   mastered_count: number;
+  complexity_score?: number | null;
 }
 
 export interface GraphEdge {
@@ -235,6 +245,8 @@ export interface ChatMessageResponse {
   role: "user" | "assistant";
   content: string;
   sources: Record<string, any> | null;
+  image_s3_keys?: string[] | null;
+  image_urls?: string[] | null;
   created_at: string;
 }
 

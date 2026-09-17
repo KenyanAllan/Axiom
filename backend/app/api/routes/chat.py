@@ -6,8 +6,9 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +50,7 @@ class ChatSessionCreate(BaseModel):
 
 class ChatMessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
+    image_s3_keys: list[str] | None = None
 
 
 class ChatMessageResponse(BaseModel):
@@ -57,6 +59,8 @@ class ChatMessageResponse(BaseModel):
     role: str
     content: str
     sources: list[dict[str, Any]] | dict[str, Any] | None = None
+    image_s3_keys: list[str] | None = None
+    image_urls: list[str] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -128,7 +132,20 @@ what the user is asking for, or ask them if unsure
 search_glossary to look it up
 - When you find glossary results, present the term and definition clearly
 - For simple knowledge questions, just answer from the provided context \
-without using tools"""
+without using tools
+
+WHEN THE STUDENT SHARES AN IMAGE:
+- Describe what you see before diving into analysis
+- For homework/problem sets: identify each problem, walk through one at a \
+time using Socratic questioning — ask the student what they think the first \
+step is before showing the solution
+- For diagrams: identify components and relationships, ask if the student \
+can explain what the diagram represents
+- For handwritten work: read the work carefully, identify where errors \
+occur, and guide the student to find the mistake themselves rather than \
+pointing it out directly
+- Never give away the full answer immediately — scaffold understanding \
+through questions"""
 
 
 # ── RAG + Tool-use converse ────────────────────────────────────────────────
@@ -138,6 +155,7 @@ without using tools"""
 def _call_bedrock_converse(
     messages: list[dict],
     tool_config: dict | None = None,
+    system_prompt: str | None = None,
 ) -> dict:
     """Synchronous Bedrock Converse API call (runs in thread pool)."""
     from app.services.bedrock import _get_client
@@ -146,7 +164,7 @@ def _call_bedrock_converse(
 
     kwargs: dict[str, Any] = {
         "modelId": settings.bedrock_model_id,
-        "system": [{"text": RAG_SYSTEM_PROMPT}],
+        "system": [{"text": system_prompt or RAG_SYSTEM_PROMPT}],
         "messages": messages,
         "inferenceConfig": {
             "maxTokens": 2048,
@@ -169,11 +187,12 @@ async def _rag_converse_with_tools(
     user_role: str,
     classroom_id: int | None,
     conversation_history: list | None = None,
+    image_blocks: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Multi-turn Bedrock Converse with tool-use loop.
 
     1. Include conversation history for multi-turn context
-    2. Send user message with RAG context
+    2. Send user message with RAG context (+ optional image blocks)
     3. If model requests tool calls, execute them and send results back
     4. Repeat until model returns text (or max rounds reached)
     """
@@ -194,7 +213,11 @@ async def _rag_converse_with_tools(
         f"## CONTEXT (retrieved from the knowledge base)\n{context}\n\n"
         f"## USER MESSAGE\n{user_message}"
     )
-    messages.append({"role": "user", "content": [{"text": prompt}]})
+    content_blocks: list[dict] = []
+    if image_blocks:
+        content_blocks.extend(image_blocks)
+    content_blocks.append({"text": prompt})
+    messages.append({"role": "user", "content": content_blocks})
 
     tool_config = {"tools": [{"toolSpec": t} for t in TOOL_DEFINITIONS]}
     tool_calls_made: list[dict] = []
@@ -342,7 +365,15 @@ async def get_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
-    return ChatSessionResponse.model_validate(session)
+    resp = ChatSessionResponse.model_validate(session)
+
+    from app.services.s3 import generate_download_url
+
+    for msg_resp in resp.messages:
+        if msg_resp.image_s3_keys:
+            msg_resp.image_urls = [generate_download_url(k) for k in msg_resp.image_s3_keys]
+
+    return resp
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
@@ -412,11 +443,12 @@ async def send_message(
     history_rows = (await db.execute(history_stmt)).scalars().all()
     conversation_history = list(reversed(history_rows))
 
-    # 1. Save user message
+    # 1. Save user message (with optional image keys)
     user_msg = ChatMessage(
         session_id=session_id,
         role="user",
         content=body.content,
+        image_s3_keys=body.image_s3_keys,
     )
     db.add(user_msg)
     await db.flush()
@@ -481,6 +513,35 @@ async def send_message(
         else "No relevant context found in the knowledge base."
     )
 
+    # 4a. Build multimodal image blocks if images attached
+    image_blocks: list[dict] | None = None
+    if body.image_s3_keys:
+        from app.services.s3 import download_bytes
+
+        image_blocks = []
+        for s3_key in body.image_s3_keys[:5]:
+            try:
+                img_bytes = await asyncio.to_thread(download_bytes, s3_key)
+                fmt = "jpeg"
+                lower_key = s3_key.lower()
+                if lower_key.endswith(".png"):
+                    fmt = "png"
+                elif lower_key.endswith(".gif"):
+                    fmt = "gif"
+                elif lower_key.endswith(".webp"):
+                    fmt = "webp"
+                image_blocks.append({
+                    "image": {
+                        "format": fmt,
+                        "source": {"bytes": img_bytes},
+                    }
+                })
+            except Exception as exc:
+                logger.warning("Failed to download chat image %s: %s", s3_key, exc)
+
+        if not image_blocks:
+            image_blocks = None
+
     import time as _time
     _bedrock_start = _time.monotonic()
     rag_result = await _rag_converse_with_tools(
@@ -492,11 +553,28 @@ async def send_message(
         user_role=user_role,
         classroom_id=classroom_id,
         conversation_history=conversation_history,
+        image_blocks=image_blocks,
     )
     _bedrock_elapsed = _time.monotonic() - _bedrock_start
     logger.info("Bedrock converse completed in %.2fs for session_id=%s", _bedrock_elapsed, session_id)
 
-    # 5. Save and return assistant message
+    # 5. Translate response if user prefers non-English
+    user_lang = user.preferred_language if user else "en"
+    if user_lang and user_lang != "en":
+        try:
+            from app.services.translate import translate_text
+
+            rag_result["content"] = await asyncio.to_thread(
+                translate_text,
+                rag_result["content"],
+                "en",
+                user_lang,
+                [settings.translate_terminology_name],
+            )
+        except Exception as exc:
+            logger.warning("Chat response translation failed: %s", exc)
+
+    # 6. Save and return assistant message
     sources_meta: Any = rag_sources if rag_sources else None
     if rag_result.get("tool_calls_made"):
         sources_meta = {
@@ -515,6 +593,51 @@ async def send_message(
     await db.refresh(assistant_msg)
 
     return ChatMessageResponse.model_validate(assistant_msg)
+
+
+ALLOWED_CHAT_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+MAX_CHAT_IMAGE_SIZE = 3_750_000  # 3.75 MB — Bedrock Converse limit
+
+
+@router.post("/sessions/{session_id}/upload-image")
+async def upload_chat_image(
+    session_id: int,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Upload an image for use in a chat message. Returns the S3 key."""
+    stmt = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.user_id == user_id,
+    )
+    chat_session = (await db.execute(stmt)).scalar_one_or_none()
+    if chat_session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    ct = file.content_type or ""
+    if ct not in ALLOWED_CHAT_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type: {ct}. Allowed: PNG, JPEG, GIF, WebP.",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_CHAT_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="Image too large. Maximum size is 3.75 MB.",
+        )
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
+    s3_key = f"chat-images/{session_id}/{uuid4().hex}.{ext}"
+
+    from app.services.s3 import upload_bytes, generate_download_url
+
+    await asyncio.to_thread(upload_bytes, s3_key, data, ct)
+    url = generate_download_url(s3_key)
+
+    return {"s3_key": s3_key, "content_type": ct, "url": url}
 
 
 @router.get("/lock-status", response_model=LockStatusResponse)

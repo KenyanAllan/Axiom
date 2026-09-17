@@ -22,6 +22,9 @@ ActivityType = Literal[
     "feynman",
     "mini_podcast",
     "quiz",
+    "visual_sketch",
+    "visual_label",
+    "visual_proof",
 ]
 
 ActivityScope = Literal["CLASSROOM_SHARED", "STUDENT_PERSONAL"]
@@ -59,11 +62,11 @@ class AttemptCreate(BaseModel):
     claim_id: str | None = None
     hints_used: bool = False
     student_response: str = Field(
-        ...,
-        min_length=1,
+        default="",
         max_length=10_000,
         description="The student's answer text.",
     )
+    response_image_s3_key: str | None = None
 
 
 # ── Response schemas ────────────────────────────────────────────────────────────
@@ -111,6 +114,9 @@ class AttemptResult(BaseModel):
     total_xp: int
     level: int
     streak_days: int
+    response_image_url: str | None = None
+    rekognition_labels: list[dict] | None = None
+    structural_check: bool | None = None
 
 
 class QueueEntryResponse(BaseModel):
@@ -197,11 +203,13 @@ class UserProfile(BaseModel):
     last_active_date: date | None = None
     email: str | None = None
     avatar: str | None = None
+    preferred_language: str | None = "en"
 
 
 class UserProfileUpdate(BaseModel):
     email: str | None = None
     avatar: str | None = None
+    preferred_language: str | None = None
 
 
 class MasteryEntry(BaseModel):

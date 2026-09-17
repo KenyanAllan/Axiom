@@ -28,8 +28,14 @@ import {
   MessageSquare,
   Play,
   Pause,
+  Pencil,
+  Tags,
+  FileSignature,
+  Camera,
+  Image as ImageIcon,
+  Upload,
 } from "lucide-react";
-import { evaluateResponse, submitAttempt, generateAudioOverview } from "@/lib/api";
+import { evaluateResponse, submitAttempt, generateAudioOverview, submitVisualResponse } from "@/lib/api";
 import type { WikiPage } from "@/components/layout/CenterStage";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -40,7 +46,10 @@ export type ActivityType =
   | "wrong_on_purpose"
   | "scenario"
   | "feynman"
-  | "mini_podcast";
+  | "mini_podcast"
+  | "visual_sketch"
+  | "visual_label"
+  | "visual_proof";
 
 export type QuizQuestionType =
   | "multi_choice"
@@ -222,6 +231,24 @@ export const TYPE_CONFIG: Partial<Record<
     color: "text-teal-500",
     bg: "bg-teal-50",
   },
+  visual_sketch: {
+    label: "Sketch",
+    icon: Pencil,
+    color: "text-indigo-500",
+    bg: "bg-indigo-50",
+  },
+  visual_label: {
+    label: "Label Diagram",
+    icon: Tags,
+    color: "text-cyan-500",
+    bg: "bg-cyan-50",
+  },
+  visual_proof: {
+    label: "Write & Photograph",
+    icon: FileSignature,
+    color: "text-orange-500",
+    bg: "bg-orange-50",
+  },
 };
 
 export function getTypeConfig(type: ActivityType) {
@@ -235,6 +262,9 @@ export const XP_BY_TYPE: Partial<Record<ActivityType, number>> = {
   scenario: 100,
   feynman: 50,
   mini_podcast: 40,
+  visual_sketch: 75,
+  visual_label: 75,
+  visual_proof: 100,
 };
 
 const DEFAULT_XP = 30;
@@ -409,6 +439,9 @@ export function ActivityFeed({
     "scenario",
     "feynman",
     "mini_podcast",
+    "visual_sketch",
+    "visual_label",
+    "visual_proof",
   ];
 
   return (
@@ -1734,6 +1767,143 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
   );
 }
 
+// ── Visual Activity (sketch / label / proof) ───────────────────────────────
+
+function VisualActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const payload = activity.payload ?? {};
+  const visualPrompt = payload.visual_prompt || payload.prompt || "Submit your visual response.";
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const allowed = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      alert("Please select a PNG, JPEG, GIF, or WebP image.");
+      return;
+    }
+    if (file.size > 3_750_000) {
+      alert("Image must be under 3.75 MB.");
+      return;
+    }
+    setSelectedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+    setFeedback(null);
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
+    if (!selectedFile) return;
+    setSubmitting(true);
+    try {
+      const numericId = Number(activity.id);
+      if (isNaN(numericId)) throw new Error("Invalid activity ID");
+      const result = await submitVisualResponse("usr_student_demo", numericId, selectedFile);
+      const fb: FeedbackState = {
+        is_correct: result.outcome === "understood",
+        feedback: result.feedback,
+      };
+      setFeedback(fb);
+      onSaveResult?.({ lastResponse: "(visual)", lastFeedback: fb });
+    } catch (err) {
+      console.error("Visual submission failed:", err);
+      setFeedback({ is_correct: false, feedback: "Failed to submit. Please try again." });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [selectedFile, activity.id, onSaveResult]);
+
+  const removeImage = useCallback(() => {
+    setSelectedFile(null);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setFeedback(null);
+  }, [previewUrl]);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-card p-4">
+        <p className="text-sm font-medium mb-2">{visualPrompt}</p>
+        {payload.expected_labels && (
+          <p className="text-xs text-muted-foreground">
+            Key elements to include: {payload.expected_labels.join(", ")}
+          </p>
+        )}
+      </div>
+
+      {previewUrl ? (
+        <div className="relative rounded-lg border bg-muted/30 p-2">
+          <img
+            src={previewUrl}
+            alt="Your submission"
+            className="max-h-64 mx-auto rounded-md object-contain"
+          />
+          <button
+            onClick={removeImage}
+            className="absolute top-1 right-1 rounded-full bg-background/80 p-1 hover:bg-background"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full rounded-lg border-2 border-dashed border-muted-foreground/30 p-8 text-center hover:border-muted-foreground/50 transition-colors"
+        >
+          <Camera className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Take a photo or upload your work
+          </p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            PNG, JPEG, GIF, or WebP &middot; Max 3.75 MB
+          </p>
+        </button>
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        capture="environment"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
+      {selectedFile && !feedback && (
+        <button
+          onClick={handleSubmit}
+          disabled={submitting}
+          className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {submitting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Grading your submission…
+            </>
+          ) : (
+            <>
+              <Send className="h-4 w-4" />
+              Submit
+            </>
+          )}
+        </button>
+      )}
+
+      {feedback && (
+        <FeedbackBanner
+          feedback={feedback}
+          activityTitle={activity.title}
+          onDiscussWithTutor={onDiscussWithTutor}
+        />
+      )}
+    </div>
+  );
+}
+
 // ── Card renderer map ────────────────────────────────────────────────────────
 
 function FallbackActivity({ activity }: RendererProps) {
@@ -1756,6 +1926,9 @@ const ACTIVITY_RENDERERS: Partial<Record<
   scenario: ScenarioActivity,
   feynman: FeynmanActivity,
   mini_podcast: MiniPodcastActivity,
+  visual_sketch: VisualActivity,
+  visual_label: VisualActivity,
+  visual_proof: VisualActivity,
 };
 
 // ── Fullscreen overlay ───────────────────────────────────────────────────────

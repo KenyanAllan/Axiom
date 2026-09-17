@@ -25,10 +25,11 @@ async def _compute_difficulty(
     user_id: str | None,
     claim_ids: list[str],
 ) -> int:
-    """Map average understanding_rating to activity difficulty (1-3).
+    """Blended difficulty: student mastery (60%) + intrinsic claim complexity (40%).
 
-    Rating 1-2 → difficulty 1 (easy), 3 → difficulty 2 (medium), 4-5 → difficulty 3 (hard).
-    Defaults to 1 when no mastery data exists.
+    Mastery component: understanding_rating 1-2 → 1, 3 → 2, 4-5 → 3.
+    Intrinsic component: complexity_score 1-5 mapped to 1-3.
+    Defaults to 1 when no data exists.
     """
     if not user_id or not claim_ids:
         return 1
@@ -40,15 +41,34 @@ async def _compute_difficulty(
         )
     )
     ratings = [r[0] for r in result.all() if r[0] is not None]
-    if not ratings:
-        return 1
 
-    avg = sum(ratings) / len(ratings)
-    if avg >= 4:
-        return 3
-    if avg >= 3:
-        return 2
-    return 1
+    if not ratings:
+        mastery_diff = 1.0
+    else:
+        avg = sum(ratings) / len(ratings)
+        if avg >= 4:
+            mastery_diff = 3.0
+        elif avg >= 3:
+            mastery_diff = 2.0
+        else:
+            mastery_diff = 1.0
+
+    complexity_result = await db.execute(
+        select(AtomicClaim.complexity_score).where(
+            AtomicClaim.id.in_(claim_ids),
+            AtomicClaim.complexity_score.isnot(None),
+        )
+    )
+    scores = [r[0] for r in complexity_result.all()]
+    if scores:
+        avg_complexity = sum(scores) / len(scores)
+        intrinsic_diff = 1.0 + (avg_complexity - 1.0) * 0.5
+        intrinsic_diff = max(1.0, min(3.0, intrinsic_diff))
+    else:
+        intrinsic_diff = mastery_diff
+
+    blended = 0.4 * intrinsic_diff + 0.6 * mastery_diff
+    return max(1, min(3, round(blended)))
 
 
 async def generate_basic_activities(
@@ -182,6 +202,85 @@ async def generate_basic_activities(
                     f"who has never encountered this concept. Use an analogy if it helps."
                 ),
                 "key_points": _extract_key_points(claim.content),
+            },
+        )
+        db.add(activity)
+        activities.append(activity)
+
+    # ── Visual Sketch (draw the concept) ────────────────────────────────────
+    if "visual_sketch" in types:
+        activity = Activity(
+            workspace_id=workspace_id,
+            creator_id=creator_id,
+            scope="STUDENT_PERSONAL",
+            type="visual_sketch",
+            title=f"Sketch: {claim.title}",
+            difficulty=2,
+            target_claim_ids=[claim.id],
+            payload={
+                "visual_prompt": (
+                    f"Draw a diagram or sketch that represents: {claim.title}. "
+                    f"Your drawing should illustrate: {claim.content}"
+                ),
+                "expected_structure": {
+                    "required_labels": _extract_key_terms(claim.content),
+                    "expected_label_count_min": 2,
+                },
+                "reference_description": claim.content,
+            },
+        )
+        db.add(activity)
+        activities.append(activity)
+
+    # ── Visual Label (label the components) ─────────────────────────────────
+    if "visual_label" in types:
+        key_terms = _extract_key_terms(claim.content)
+        if len(key_terms) >= 2:
+            activity = Activity(
+                workspace_id=workspace_id,
+                creator_id=creator_id,
+                scope="STUDENT_PERSONAL",
+                type="visual_label",
+                title=f"Label: {claim.title}",
+                difficulty=2,
+                target_claim_ids=[claim.id],
+                payload={
+                    "visual_prompt": (
+                        f"Draw and label the key components of: {claim.title}. "
+                        f"Make sure to label each part clearly."
+                    ),
+                    "expected_labels": key_terms,
+                    "expected_structure": {
+                        "required_labels": key_terms,
+                        "expected_label_count_min": len(key_terms),
+                    },
+                    "reference_description": claim.content,
+                },
+            )
+            db.add(activity)
+            activities.append(activity)
+
+    # ── Visual Proof (write proof on paper) ─────────────────────────────────
+    if "visual_proof" in types:
+        activity = Activity(
+            workspace_id=workspace_id,
+            creator_id=creator_id,
+            scope="STUDENT_PERSONAL",
+            type="visual_proof",
+            title=f"Write & Photograph: {claim.title}",
+            difficulty=3,
+            target_claim_ids=[claim.id],
+            payload={
+                "visual_prompt": (
+                    f"Write out your detailed solution or proof for: {claim.title}. "
+                    f"Photograph your handwritten work and submit the image."
+                ),
+                "reference_description": claim.content,
+                "grading_rubric": (
+                    f"Evaluate whether the handwritten response demonstrates understanding of: "
+                    f"{claim.content}. Check for logical flow, correct notation, and completeness."
+                ),
+                "expected_structure": {},
             },
         )
         db.add(activity)
@@ -344,6 +443,17 @@ def _extract_key_points(content: str) -> list[str]:
             scored.append((density, s.strip()))
     scored.sort(key=lambda x: x[0], reverse=True)
     return [s for _, s in scored[:3]]
+
+
+def _extract_key_terms(content: str) -> list[str]:
+    """Extract capitalized or multi-word technical terms from claim content."""
+    capitalized = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", content)
+    unique = list(dict.fromkeys(capitalized))
+    if len(unique) < 2:
+        words = re.findall(r"\b[a-zA-Z]{4,}\b", content)
+        stopwords = {"the", "that", "this", "with", "from", "have", "been", "which", "their", "about"}
+        unique = list(dict.fromkeys(w for w in words if w.lower() not in stopwords))
+    return unique[:6]
 
 
 AI_ACTIVITY_PROMPTS: dict[str, str] = {

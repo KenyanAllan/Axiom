@@ -35,6 +35,9 @@ slowapi==0.1.9
 # PDF parsing
 pymupdf==1.25.1
 
+# Image processing
+Pillow>=10.0.0
+
 # Utilities
 python-dotenv==1.0.1
 structlog==24.4.0

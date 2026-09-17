@@ -24,6 +24,7 @@ import {
   Loader2,
   ZoomIn,
   ZoomOut,
+  ImageIcon,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
@@ -38,6 +39,7 @@ import type { UserRole, ViewTab, GraphTopic, GraphEdge } from "@/lib/types";
 import {
   createChatSession,
   sendChatMessage,
+  uploadChatImage,
   fetchGraph,
   createTopic,
   updateTopic,
@@ -100,6 +102,13 @@ interface ChatContextItem {
   description?: string;
 }
 
+interface StagedImage {
+  file: File;
+  previewUrl: string;
+  s3Key: string | null;
+  uploading: boolean;
+}
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -107,6 +116,7 @@ interface ChatMessage {
   time: string;
   context?: ChatContextItem[];
   sources?: Record<string, any> | null;
+  imageUrls?: string[];
 }
 
 // ── Wiki data ─────────────────────────────────────────────────────────────────
@@ -365,6 +375,7 @@ interface DemoNode {
   x: number;
   y: number;
   mastery: number;
+  complexity?: number | null;
   deps: string[];
 }
 
@@ -400,6 +411,7 @@ function computeNodeLayout(topics: GraphTopic[], edges: GraphEdge[]): DemoNode[]
       x: 150 + col * 250,
       y: 60 + row * 120,
       mastery,
+      complexity: t.complexity_score,
       deps: depMap.get(t.topic_id) ?? [],
     };
   });
@@ -480,6 +492,8 @@ export function CenterStage({
   const [isTyping, setIsTyping] = useState(false);
   const [chatContext, setChatContext] = useState<ChatContextItem[]>([]);
   const [graphNodes, setGraphNodes] = useState<DemoNode[]>(DEMO_NODES);
+  const [stagedImages, setStagedImages] = useState<StagedImage[]>([]);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recRef = useRef<any>(null);
 
@@ -526,6 +540,61 @@ export function CenterStage({
     [onTabChange, wikiPages, onWikiPageSelect]
   );
 
+  const stageImageFile = useCallback(
+    async (file: File, backendSessionId?: number) => {
+      const ALLOWED = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+      if (!ALLOWED.includes(file.type)) return;
+      if (file.size > 3_750_000) return;
+
+      const previewUrl = URL.createObjectURL(file);
+      const entry: StagedImage = { file, previewUrl, s3Key: null, uploading: true };
+      setStagedImages((prev) => [...prev, entry]);
+
+      const sessionBackendId =
+        backendSessionId ??
+        sessions.find((s) => s.id === activeSessionId)?.backendId;
+
+      if (sessionBackendId) {
+        try {
+          const result = await uploadChatImage(userId, sessionBackendId, file);
+          setStagedImages((prev) =>
+            prev.map((img) =>
+              img.previewUrl === previewUrl
+                ? { ...img, s3Key: result.s3_key, uploading: false }
+                : img
+            )
+          );
+        } catch (err) {
+          console.error("CenterStage: image upload failed:", err);
+          setStagedImages((prev) => prev.filter((img) => img.previewUrl !== previewUrl));
+          URL.revokeObjectURL(previewUrl);
+        }
+      } else {
+        setStagedImages((prev) =>
+          prev.map((img) =>
+            img.previewUrl === previewUrl ? { ...img, uploading: false } : img
+          )
+        );
+      }
+    },
+    [userId, sessions, activeSessionId]
+  );
+
+  const handleImageSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files) return;
+      Array.from(files).forEach((f) => stageImageFile(f));
+      e.target.value = "";
+    },
+    [stageImageFile]
+  );
+
+  const removeStagedImage = useCallback((previewUrl: string) => {
+    setStagedImages((prev) => prev.filter((img) => img.previewUrl !== previewUrl));
+    URL.revokeObjectURL(previewUrl);
+  }, []);
+
   const createNewSession = useCallback(
     async (title?: string) => {
       const localId = `chat_${++_msgId}`;
@@ -559,7 +628,15 @@ export function CenterStage({
       });
       const contextPrefix = contextParts.join("\n\n");
       const fullText = contextPrefix ? (text.trim() ? `${contextPrefix}\n\n${text.trim()}` : contextPrefix) : text.trim();
-      if (!fullText) return;
+
+      const currentImages = [...stagedImages];
+      const imageKeys = currentImages.filter((img) => img.s3Key).map((img) => img.s3Key!);
+      const imagePreviewUrls = currentImages.map((img) => img.previewUrl);
+
+      if (!fullText && imageKeys.length === 0) return;
+
+      const messageText = fullText || "Please look at this image";
+      setStagedImages([]);
       const title = sessionTitle ?? text.trim().slice(0, 40);
       let targetSessionId = activeSessionId;
 
@@ -586,13 +663,28 @@ export function CenterStage({
               s.id === localId ? { ...s, backendId: backendSession.id } : s
             )
           );
+
+          // Upload any images that didn't have a backend session yet
+          const uploadedKeys = [...imageKeys];
+          for (const img of currentImages) {
+            if (!img.s3Key && img.file) {
+              try {
+                const result = await uploadChatImage(userId, backendSession.id, img.file);
+                uploadedKeys.push(result.s3_key);
+              } catch (err) {
+                console.error("CenterStage: late image upload failed:", err);
+              }
+            }
+          }
+
           // Use backend session for sending message
           const userMsg: ChatMessage = {
             id: `m${++_msgId}`,
             role: "user",
-            text: text.trim(),
+            text: messageText,
             time: ts(),
             context: chatContext.length > 0 ? [...chatContext] : undefined,
+            imageUrls: imagePreviewUrls.length > 0 ? imagePreviewUrls : undefined,
           };
           setMessages((prev) => [...prev, userMsg]);
           setInput("");
@@ -603,7 +695,8 @@ export function CenterStage({
             const reply = await sendChatMessage(
               userId,
               backendSession.id,
-              fullText
+              messageText,
+              uploadedKeys.length > 0 ? uploadedKeys : undefined
             );
             setMessages((prev) => [
               ...prev,
@@ -638,9 +731,10 @@ export function CenterStage({
       const userMsg: ChatMessage = {
         id: `m${++_msgId}`,
         role: "user",
-        text: text.trim(),
+        text: messageText,
         time: ts(),
         context: chatContext.length > 0 ? [...chatContext] : undefined,
+        imageUrls: imagePreviewUrls.length > 0 ? imagePreviewUrls : undefined,
       };
       setMessages((prev) => [...prev, userMsg]);
       setInput("");
@@ -653,7 +747,7 @@ export function CenterStage({
 
       if (backendId) {
         try {
-          const reply = await sendChatMessage(userId, backendId, fullText);
+          const reply = await sendChatMessage(userId, backendId, messageText, imageKeys.length > 0 ? imageKeys : undefined);
           setMessages((prev) => [
             ...prev,
             {
@@ -684,7 +778,7 @@ export function CenterStage({
         setIsTyping(false);
       }, 1500);
     },
-    [activeTab, onTabChange, chatContext, activeSessionId, sessions, onSessionsChange, onActiveSessionIdChange, userId]
+    [activeTab, onTabChange, chatContext, activeSessionId, sessions, onSessionsChange, onActiveSessionIdChange, userId, stagedImages]
   );
 
   useEffect(() => {
@@ -706,6 +800,21 @@ export function CenterStage({
       sendMessage(input);
     }
   };
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) stageImageFile(file);
+        }
+      }
+    },
+    [stageImageFile]
+  );
 
   const toggleVoice = useCallback(() => {
     if (isListening) {
@@ -893,6 +1002,39 @@ export function CenterStage({
             ))}
           </div>
         )}
+        {/* Image preview strip */}
+        {stagedImages.length > 0 && (
+          <div className="mb-2 flex gap-2 overflow-x-auto">
+            {stagedImages.map((img) => (
+              <div key={img.previewUrl} className="relative shrink-0">
+                <img
+                  src={img.previewUrl}
+                  alt="Staged"
+                  className="h-16 w-16 rounded-lg border object-cover"
+                />
+                {img.uploading && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  </div>
+                )}
+                <button
+                  onClick={() => removeStagedImage(img.previewUrl)}
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          className="hidden"
+          onChange={handleImageSelect}
+        />
         <div className="flex items-center gap-2 rounded-lg border bg-background px-4 py-2.5">
           <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
@@ -900,13 +1042,21 @@ export function CenterStage({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={
               activeTab === "chat"
-                ? "Type a message..."
+                ? "Type a message or paste an image..."
                 : "Ask a question, request a hint, or search Axiom vaults..."
             }
             className="flex-1 bg-transparent text-sm placeholder:text-muted-foreground focus:outline-none"
           />
+          <button
+            onClick={() => imageInputRef.current?.click()}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title="Attach image"
+          >
+            <ImageIcon className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={toggleVoice}
             className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
@@ -924,7 +1074,7 @@ export function CenterStage({
           </button>
           <button
             onClick={() => sendMessage(input)}
-            disabled={isTyping || (!input.trim() && chatContext.length === 0)}
+            disabled={isTyping || (!input.trim() && chatContext.length === 0 && stagedImages.length === 0)}
             className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
           >
             <ArrowUp className="h-3.5 w-3.5" />
@@ -1005,6 +1155,20 @@ function ChatBubble({ message, onTabChange, userAvatar }: { message: ChatMessage
                 <Paperclip className="h-2.5 w-2.5" />
                 {ctx.claimTitle}
               </span>
+            ))}
+          </div>
+        )}
+
+        {/* Attached images */}
+        {message.imageUrls && message.imageUrls.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap gap-2">
+            {message.imageUrls.map((url, i) => (
+              <img
+                key={i}
+                src={url}
+                alt={`Attachment ${i + 1}`}
+                className="max-h-48 max-w-xs rounded-lg border object-contain"
+              />
             ))}
           </div>
         )}
@@ -1961,6 +2125,18 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
                     {node.mastery}%
                   </text>
                 )}
+                {node.complexity != null && (
+                  <text
+                    x={node.x + 10}
+                    y={node.y + 12}
+                    textAnchor="middle"
+                    fontSize="8"
+                    fontFamily="JetBrains Mono, monospace"
+                    fill={node.complexity <= 2 ? "#22c55e" : node.complexity <= 3.5 ? "#eab308" : "#ef4444"}
+                  >
+                    {node.complexity <= 2 ? "●" : node.complexity <= 3.5 ? "●" : "●"}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -1982,6 +2158,18 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-0.5 w-4 bg-amber-500" />
           Prerequisite
+        </span>
+        <span className="flex items-center gap-1">
+          <Circle className="h-2.5 w-2.5 fill-green-500 text-green-500" />
+          Easy
+        </span>
+        <span className="flex items-center gap-1">
+          <Circle className="h-2.5 w-2.5 fill-yellow-500 text-yellow-500" />
+          Med
+        </span>
+        <span className="flex items-center gap-1">
+          <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />
+          Hard
         </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-slate-300" />

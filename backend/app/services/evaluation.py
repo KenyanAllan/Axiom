@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Valid outcomes per spec section 3.1
 VALID_OUTCOMES = {"understood", "did_not_understand", "neutral"}
+VISUAL_TYPES = {"visual_sketch", "visual_label", "visual_proof"}
 
 
 def _map_bedrock_result(grading: dict) -> tuple[str, str]:
@@ -53,6 +54,7 @@ async def evaluate_student_response(
     activity_id: int | None = None,
     hints_used: bool = False,
     difficulty: int = 1,
+    response_image_s3_key: str | None = None,
 ) -> dict:
     """Run the full evaluation pipeline.
 
@@ -81,6 +83,7 @@ async def evaluate_student_response(
 
     outcome: str
     feedback: str
+    visual_result: dict | None = None
 
     # Deterministic grading for known activity types
     DETERMINISTIC_TYPES = {"true_false", "multi_choice", "flashcard", "flashcard_deck", "fill_blank"}
@@ -133,6 +136,26 @@ async def evaluate_student_response(
         else:
             outcome = "neutral"
             feedback = ""
+
+    elif activity_type in VISUAL_TYPES and response_image_s3_key and activity_obj is not None:
+        import asyncio
+        from app.services.s3 import download_bytes
+        from app.services.visual_grading import grade_visual_response
+
+        image_bytes = await asyncio.to_thread(download_bytes, response_image_s3_key)
+        ext = response_image_s3_key.rsplit(".", 1)[-1].lower()
+        fmt_map = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}
+        image_format = fmt_map.get(ext, "jpeg")
+
+        visual_result = await asyncio.to_thread(
+            grade_visual_response,
+            image_bytes,
+            activity_obj.payload or {},
+            claim.content,
+            image_format,
+        )
+        outcome = visual_result["outcome"]  # type: ignore[assignment]
+        feedback = visual_result["feedback"]  # type: ignore[assignment]
 
     else:
         # Non-deterministic types: call Bedrock
@@ -210,6 +233,7 @@ async def evaluate_student_response(
         claim_id=claim_id,
         outcome=outcome,
         student_response=student_response,
+        response_image_s3_key=response_image_s3_key,
         feedback=feedback,
         hints_used=hints_used,
         difficulty=difficulty,
@@ -260,7 +284,7 @@ async def evaluate_student_response(
         user_id, claim_id, outcome, xp_awarded, new_rating, new_status,
     )
 
-    return {
+    result = {
         "attempt_id": attempt.id,
         "claim_id": claim_id,
         "outcome": outcome,
@@ -275,6 +299,10 @@ async def evaluate_student_response(
         "total_xp": user.xp,
         "level": user.level,
     }
+    if visual_result is not None:
+        result["rekognition_labels"] = visual_result.get("rekognition_labels")
+        result["structural_check"] = visual_result.get("structural_check")
+    return result
 
 
 def grade_quiz_question(question: dict, response: str) -> tuple[str, str]:

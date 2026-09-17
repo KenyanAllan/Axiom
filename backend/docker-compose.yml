@@ -54,6 +54,8 @@ services:
       # via ECS task role or environment injection — never hard-code here.
       BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-6
       BEDROCK_EMBED_MODEL_ID: amazon.titan-embed-text-v2:0
+      TRANSLATE_TERMINOLOGY_NAME: axiom-stem-terms
+      COMPREHEND_LANGUAGE_CODE: en
       LOG_LEVEL: debug
     depends_on:
       postgres:
@@ -78,6 +80,8 @@ services:
       AWS_DEFAULT_REGION: us-east-1
       BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-6
       BEDROCK_EMBED_MODEL_ID: amazon.titan-embed-text-v2:0
+      TRANSLATE_TERMINOLOGY_NAME: axiom-stem-terms
+      COMPREHEND_LANGUAGE_CODE: en
     depends_on:
       postgres:
         condition: service_healthy

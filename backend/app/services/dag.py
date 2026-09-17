@@ -188,6 +188,7 @@ async def compute_frontier(
             t.id AS topic_id,
             t.slug,
             t.title,
+            t.complexity_score,
             COUNT(ac.id)::int AS claim_count,
             COUNT(um.claim_id) FILTER (WHERE um.status = 'mastered')::int AS mastered_count
         FROM topics t
@@ -195,7 +196,7 @@ async def compute_frontier(
         LEFT JOIN user_mastery um
             ON um.claim_id = ac.id AND um.user_id = :user_id
         WHERE 1=1 {workspace_filter}
-        GROUP BY t.id, t.slug, t.title
+        GROUP BY t.id, t.slug, t.title, t.complexity_score
     ),
     fully_mastered_topics AS (
         SELECT topic_id
@@ -213,9 +214,9 @@ async def compute_frontier(
                 AND tp.prerequisite_id NOT IN (SELECT topic_id FROM fully_mastered_topics)
           )
     )
-    SELECT topic_id, slug, title, claim_count, mastered_count
+    SELECT topic_id, slug, title, claim_count, mastered_count, complexity_score
     FROM frontier
-    ORDER BY mastered_count DESC, title ASC
+    ORDER BY COALESCE(complexity_score, 3.0) ASC, mastered_count DESC, title ASC
     """)
 
     rows = (await db.execute(sql, params)).all()
@@ -226,6 +227,7 @@ async def compute_frontier(
             "title": r.title,
             "claim_count": r.claim_count,
             "mastered_count": r.mastered_count,
+            "complexity_score": r.complexity_score,
         }
         for r in rows
     ]

@@ -36,7 +36,7 @@ function headers(userId: string): HeadersInit {
 
 export async function updateUserProfile(
   userId: string,
-  patch: { email?: string | null; avatar?: string | null }
+  patch: { email?: string | null; avatar?: string | null; preferred_language?: string | null }
 ): Promise<UserProfile> {
   const res = await fetch(`${BASE}/api/users/me`, {
     method: "PATCH",
@@ -393,17 +393,92 @@ export async function deleteChatSession(
 export async function sendChatMessage(
   userId: string,
   sessionId: number,
-  content: string
+  content: string,
+  image_s3_keys?: string[]
 ): Promise<ChatMessageResponse> {
+  const payload: Record<string, unknown> = { content };
+  if (image_s3_keys && image_s3_keys.length > 0) {
+    payload.image_s3_keys = image_s3_keys;
+  }
   const res = await fetch(
     `${BASE}/api/chat/sessions/${sessionId}/messages`,
     {
       method: "POST",
       headers: headers(userId),
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(payload),
     }
   );
   if (!res.ok) throw new Error(`Send message failed: ${res.status}`);
+  return res.json();
+}
+
+export async function uploadChatImage(
+  userId: string,
+  sessionId: number,
+  file: File
+): Promise<{ s3_key: string; content_type: string; url: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(
+    `${BASE}/api/chat/sessions/${sessionId}/upload-image`,
+    {
+      method: "POST",
+      headers: { "X-Demo-User": userId },
+      body: formData,
+    }
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText);
+    throw new Error(`Upload image failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+// ── Visual Activity ──────────────────────────────────────────────────────────
+
+export async function uploadVisualActivityImage(
+  userId: string,
+  activityId: number,
+  file: File
+): Promise<{ s3_key: string; content_type: string; url: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(
+    `${BASE}/api/activities/${activityId}/upload-visual-image`,
+    {
+      method: "POST",
+      headers: { "X-Demo-User": userId },
+      body: formData,
+    }
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText);
+    throw new Error(`Upload visual image failed (${res.status}): ${detail}`);
+  }
+  return res.json();
+}
+
+export async function submitVisualResponse(
+  userId: string,
+  activityId: number,
+  file: File,
+  textResponse?: string
+): Promise<AttemptResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (textResponse) formData.append("text_response", textResponse);
+  const res = await fetch(
+    `${BASE}/api/activities/${activityId}/submit-visual`,
+    {
+      method: "POST",
+      headers: { "X-Demo-User": userId },
+      body: formData,
+    }
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText);
+    throw new Error(`Submit visual response failed (${res.status}): ${detail}`);
+  }
   return res.json();
 }
 

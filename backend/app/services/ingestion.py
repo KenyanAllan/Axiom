@@ -99,6 +99,12 @@ AUDIO_CONTENT_TYPES = {
 
 AUDIO_EXTENSIONS = {".mp3", ".mp4", ".wav", ".ogg", ".flac", ".webm", ".m4a"}
 
+IMAGE_CONTENT_TYPES = {
+    "image/png", "image/jpeg", "image/tiff", "image/bmp", "image/gif", "image/heic",
+}
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif", ".heic"}
+
 
 def is_audio_file(content_type: str, filename: str) -> bool:
     """Check if the file is an audio/video type that needs transcription."""
@@ -106,6 +112,14 @@ def is_audio_file(content_type: str, filename: str) -> bool:
         return True
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return ext in AUDIO_EXTENSIONS
+
+
+def is_image_file(content_type: str, filename: str) -> bool:
+    """Check if the file is an image type that needs OCR."""
+    if content_type in IMAGE_CONTENT_TYPES:
+        return True
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext in IMAGE_EXTENSIONS
 
 
 def transcribe_audio_file(s3_key: str, source_doc_id: int) -> str:
@@ -188,6 +202,10 @@ def parse_source_file(
             text = textract_pdf_to_text(s3_key, source_doc_id)
 
         return text
+
+    if is_image_file(content_type, filename):
+        from app.services.textract import detect_image_text_sync
+        return detect_image_text_sync(file_bytes)
 
     if content_type.startswith("text/") or filename.lower().endswith((".md", ".txt", ".rst")):
         return file_bytes.decode("utf-8", errors="replace")
@@ -512,7 +530,7 @@ def ingest_source_document(
     engine = create_engine(settings.sync_database_url, pool_pre_ping=True)
     Session = sessionmaker(bind=engine)
 
-    stats = {"chunks": 0, "topics_created": 0, "topics_merged": 0, "claims_inserted": 0, "glossary_terms_inserted": 0, "errors": 0}
+    stats: dict = {"chunks": 0, "topics_created": 0, "topics_merged": 0, "claims_inserted": 0, "glossary_terms_inserted": 0, "errors": 0, "avg_complexity": None}
 
     # ── 1. Download ──────────────────────────────────────────────────────────
     logger.info("Downloading source doc %s from S3: %s", source_doc_id, s3_key)
@@ -545,6 +563,47 @@ def ingest_source_document(
                 if doc:
                     doc.transcript_s3_key = f"transcripts/{source_doc_id}.txt"
                     db.commit()
+        elif is_image_file(content_type, filename):
+            logger.info("Image file detected — routing through Textract + Rekognition")
+            from app.services.textract import detect_image_text_sync
+            from app.services.rekognition import detect_image_text as rekog_detect_text
+            from app.services.rekognition import detect_image_labels
+
+            ocr_bytes = file_bytes
+            if filename.lower().endswith(".heic"):
+                try:
+                    from PIL import Image as PILImage
+                    import io
+                    img = PILImage.open(io.BytesIO(file_bytes))
+                    buf = io.BytesIO()
+                    img.convert("RGB").save(buf, format="JPEG", quality=90)
+                    ocr_bytes = buf.getvalue()
+                    logger.info("Converted HEIC to JPEG for OCR (%d bytes)", len(ocr_bytes))
+                except Exception as conv_exc:
+                    logger.warning("HEIC conversion failed (%s), attempting raw OCR", conv_exc)
+
+            textract_text = detect_image_text_sync(ocr_bytes)
+
+            try:
+                rekog_text = rekog_detect_text(ocr_bytes)
+                textract_lines = set(textract_text.strip().splitlines())
+                rekog_extra = [l for l in rekog_text.strip().splitlines() if l not in textract_lines]
+                if rekog_extra:
+                    textract_text += "\n\n" + "\n".join(rekog_extra)
+            except Exception as rekog_exc:
+                logger.warning("Rekognition DetectText failed (%s), using Textract only", rekog_exc)
+
+            try:
+                labels = detect_image_labels(ocr_bytes)
+                with Session() as db:
+                    doc = db.get(SourceDocument, source_doc_id)
+                    if doc:
+                        doc.metadata_ = {**(doc.metadata_ or {}), "image_labels": labels}
+                        db.commit()
+            except Exception as label_exc:
+                logger.warning("Rekognition DetectLabels failed (%s), skipping", label_exc)
+
+            full_text = textract_text
         elif content_type == "application/pdf" or filename.lower().endswith(".pdf"):
             logger.info("PDF detected — routing through Textract for OCR")
             try:
@@ -577,6 +636,20 @@ def ingest_source_document(
                 db.commit()
         return stats
 
+    # ── 2b. Language detection & translation ───────────────────────────────
+    source_language = "en"
+    full_text_original = full_text
+    try:
+        from app.services.translate import detect_language, translate_text as _translate
+
+        source_language = detect_language(full_text[:1000])
+        if source_language != "en":
+            logger.info("Non-English source detected (%s) — translating to English for embedding", source_language)
+            full_text = _translate(full_text, source_language, "en", [settings.translate_terminology_name])
+            stats["source_language"] = source_language
+    except Exception as exc:
+        logger.warning("Language detection/translation failed: %s — proceeding in original language", exc)
+
     # ── 3. Chunk ─────────────────────────────────────────────────────────────
     chunks = chunk_text(full_text)
     stats["chunks"] = len(chunks)
@@ -586,6 +659,7 @@ def ingest_source_document(
     with Session() as db:
         # Track topics we've already matched in this run (avoid re-querying)
         topic_cache: dict[str, Topic] = {}
+        topic_chunk_counts: dict[str, int] = {}
 
         for chunk in chunks:
             # 4a. Extract topic + claims
@@ -629,6 +703,25 @@ def ingest_source_document(
                 else:
                     stats["topics_merged"] += 1
 
+            # 4c-ii. Compute chunk complexity and apply to topic (true running avg)
+            try:
+                from app.services.comprehend import compute_complexity_score
+                chunk_complexity = compute_complexity_score(
+                    chunk["text"][:5000], settings.comprehend_language_code,
+                )
+                topic_chunk_key = cache_key + "_n"
+                if topic.complexity_score is None:
+                    topic.complexity_score = chunk_complexity
+                    topic_chunk_counts[topic_chunk_key] = 1
+                else:
+                    n = topic_chunk_counts.get(topic_chunk_key, 1)
+                    topic.complexity_score = round(
+                        (topic.complexity_score * n + chunk_complexity) / (n + 1), 1,
+                    )
+                    topic_chunk_counts[topic_chunk_key] = n + 1
+            except Exception as exc:
+                logger.warning("Complexity scoring failed for chunk %d: %s", chunk["index"], exc)
+
             # 4d. Insert claims
             for claim_data in claims_data:
                 chunk_idx = chunk["index"]
@@ -647,6 +740,16 @@ def ingest_source_document(
                     logger.warning("Claim embedding failed after retries for '%s'", claim_id)
                     claim_embedding = None
 
+                claim_complexity = None
+                try:
+                    from app.services.comprehend import compute_complexity_score as _cc
+                    if claim_content and len(claim_content) >= 50:
+                        claim_complexity = _cc(claim_content, settings.comprehend_language_code)
+                    else:
+                        claim_complexity = topic.complexity_score
+                except Exception:
+                    pass
+
                 claim = AtomicClaim(
                     id=claim_id,
                     topic_id=topic.id,
@@ -657,6 +760,9 @@ def ingest_source_document(
                     flawed_snippet=claim_data.get("flawed_snippet"),
                     rubric=claim_data.get("rubric"),
                     embedding=claim_embedding,
+                    original_language=source_language if source_language != "en" else None,
+                    original_content=claim_content if source_language != "en" else None,
+                    complexity_score=claim_complexity,
                 )
                 db.merge(claim)
                 stats["claims_inserted"] += 1
@@ -688,6 +794,11 @@ def ingest_source_document(
                 stats["glossary_terms_inserted"] += 1
 
         db.commit()
+
+    # Compute average complexity across topics
+    topic_scores = [t.complexity_score for t in topic_cache.values() if t.complexity_score is not None]
+    if topic_scores:
+        stats["avg_complexity"] = round(sum(topic_scores) / len(topic_scores), 1)
 
     # ── 5. Update status ─────────────────────────────────────────────────────
     with Session() as db:

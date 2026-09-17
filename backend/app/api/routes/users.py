@@ -43,6 +43,7 @@ async def get_me(
         last_active_date=user.last_active_date,
         email=user.email,
         avatar=user.avatar,
+        preferred_language=user.preferred_language,
     )
 
 
@@ -65,6 +66,8 @@ async def update_me(
         user.email = body.email or None
     if body.avatar is not None:
         user.avatar = body.avatar or None
+    if body.preferred_language is not None:
+        user.preferred_language = body.preferred_language
 
     await db.commit()
     await db.refresh(user)
@@ -80,6 +83,7 @@ async def update_me(
         last_active_date=user.last_active_date,
         email=user.email,
         avatar=user.avatar,
+        preferred_language=user.preferred_language,
     )
 
 

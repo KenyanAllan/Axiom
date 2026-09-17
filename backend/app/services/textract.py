@@ -41,6 +41,30 @@ def _get_s3_client() -> Any:
     return _s3_client
 
 
+def detect_image_text_sync(image_bytes: bytes) -> str:
+    """Synchronous text detection for single-page images (PNG/JPEG/TIFF).
+
+    Uses the inline Bytes API (no S3 required). Supports images up to 10 MB.
+    Extracts LINE blocks and joins them with newlines.
+    """
+    client = _get_textract_client()
+
+    try:
+        response = client.detect_document_text(Document={"Bytes": image_bytes})
+
+        lines: list[str] = []
+        for block in response.get("Blocks", []):
+            if block["BlockType"] == "LINE":
+                lines.append(block["Text"])
+
+        text = "\n".join(lines)
+        logger.info("Textract sync image OCR: extracted %d lines (%d chars)", len(lines), len(text))
+        return text
+    except Exception as exc:
+        logger.error("Textract sync image OCR failed: %s", exc)
+        raise
+
+
 def start_text_detection(s3_key: str, source_doc_id: int) -> str:
     """Start an async Textract text detection job for a PDF in S3.
 

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,7 +51,7 @@ router = APIRouter(prefix="/api/activities", tags=["activities"])
 class GenerateRequest(BaseModel):
     claim_id: str
     workspace_id: int
-    types: list[str] = Field(default=["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman"])
+    types: list[str] = Field(default=["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof"])
 
 
 # ── POST /api/activities/evaluate ────────────────────────────────────────────
@@ -274,6 +277,7 @@ async def submit_attempt(
             activity_id=body.activity_id,
             hints_used=body.hints_used,
             difficulty=activity.difficulty,
+            response_image_s3_key=body.response_image_s3_key,
         )
     except ValueError as exc:
         logger.warning("Submit attempt failed: %s", exc)
@@ -570,3 +574,122 @@ async def get_activity(
         raise HTTPException(status_code=404, detail="Activity not found")
 
     return ActivityResponse.model_validate(activity)
+
+
+# ── Visual activity image upload & submission ────────────────────────────────
+
+ALLOWED_VISUAL_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+MAX_VISUAL_IMAGE_SIZE = 3_750_000
+
+
+@router.post("/{activity_id}/upload-visual-image")
+async def upload_visual_image(
+    activity_id: int,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Upload an image for a visual activity response."""
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    ct = (file.content_type or "").lower()
+    if ct not in ALLOWED_VISUAL_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type: {ct}. Allowed: PNG, JPEG, GIF, WebP.",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_VISUAL_IMAGE_SIZE:
+        raise HTTPException(status_code=413, detail="Image exceeds 3.75 MB limit.")
+
+    ext = ct.split("/")[-1].replace("jpeg", "jpg")
+    s3_key = f"activity-responses/{user_id}/{activity_id}/{uuid4().hex}.{ext}"
+
+    from app.services.s3 import upload_bytes, generate_download_url
+
+    await asyncio.to_thread(upload_bytes, s3_key, data, ct)
+    url = generate_download_url(s3_key)
+
+    return {"s3_key": s3_key, "content_type": ct, "url": url}
+
+
+@router.post("/{activity_id}/submit-visual")
+async def submit_visual_response(
+    activity_id: int,
+    file: UploadFile = File(...),
+    text_response: str = Form(default=""),
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AttemptResult:
+    """Submit a visual (image) response for a visual activity type.
+
+    Uploads the image, runs grading, records the attempt, and returns results.
+    """
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    ct = (file.content_type or "").lower()
+    if ct not in ALLOWED_VISUAL_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type: {ct}. Allowed: PNG, JPEG, GIF, WebP.",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_VISUAL_IMAGE_SIZE:
+        raise HTTPException(status_code=413, detail="Image exceeds 3.75 MB limit.")
+
+    ext = ct.split("/")[-1].replace("jpeg", "jpg")
+    s3_key = f"activity-responses/{user_id}/{activity_id}/{uuid4().hex}.{ext}"
+
+    from app.services.s3 import upload_bytes
+
+    await asyncio.to_thread(upload_bytes, s3_key, data, ct)
+
+    claim_id = None
+    target_ids = activity.target_claim_ids or []
+    if target_ids:
+        claim_id = target_ids[0]
+    if claim_id is None:
+        raise HTTPException(status_code=400, detail="Activity has no target claims")
+
+    try:
+        result = await evaluate_student_response(
+            db=db,
+            user_id=user_id,
+            claim_id=claim_id,
+            student_response=text_response or "(visual response)",
+            activity_id=activity_id,
+            hints_used=False,
+            difficulty=activity.difficulty,
+            response_image_s3_key=s3_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    from app.services.s3 import generate_download_url
+
+    return AttemptResult(
+        attempt_id=result["attempt_id"],
+        claim_id=result["claim_id"],
+        outcome=result["outcome"],
+        hints_used=result["hints_used"],
+        xp_awarded=result["xp_awarded"],
+        rating_change=result["rating_change"],
+        new_rating=result["new_rating"],
+        feedback=result["feedback"],
+        total_xp=result["total_xp"],
+        level=result["level"],
+        streak_days=result["streak_days"],
+        response_image_url=generate_download_url(s3_key),
+        rekognition_labels=result.get("rekognition_labels"),
+        structural_check=result.get("structural_check"),
+    )

@@ -67,6 +67,26 @@ def generate_download_url(s3_key: str) -> str:
     return download_url
 
 
+def upload_bytes(s3_key: str, data: bytes, content_type: str) -> None:
+    client = _get_client()
+    client.put_object(
+        Bucket=settings.s3_bucket_name,
+        Key=s3_key,
+        Body=data,
+        ContentType=content_type,
+    )
+    logger.info("Uploaded %d bytes to S3 key=%s", len(data), s3_key)
+
+
+def download_bytes(s3_key: str) -> bytes:
+    client = _get_client()
+    response = client.get_object(
+        Bucket=settings.s3_bucket_name,
+        Key=s3_key,
+    )
+    return response["Body"].read()
+
+
 def delete_object(s3_key: str) -> None:
     """Delete an object from S3."""
     client = _get_client()

@@ -2,9 +2,10 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Axiom Learning Platform — complete AWS infrastructure.
   Creates VPC, RDS PostgreSQL 16 (pgvector), optional ElastiCache Redis,
-  S3 buckets, EC2 with IAM role (Bedrock/S3/Transcribe/Polly/Textract), Elastic IP, and networking.
+  S3 buckets, EC2 with IAM role (Bedrock/S3/Transcribe/Polly/Textract/Rekognition/Translate/Comprehend),
+  Elastic IP, and networking.
 
-  PREREQUISITES (cannot be automated via CloudFormation):
+  PREREQUISITES:
     1. An EC2 key pair in your target region (create in EC2 console > Key Pairs)
     2. Bedrock model access: request Claude Sonnet 4.6 + Titan Embeddings v2
        in the Bedrock console > Model access BEFORE deploying
@@ -34,12 +35,7 @@ Metadata:
       CORSOrigins: { default: 'Allowed CORS origins' }
       IncludeElastiCache: { default: 'Deploy ElastiCache Redis?' }
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Parameters
-# ══════════════════════════════════════════════════════════════════════════════
-
 Parameters:
-
   ProjectName:
     Type: String
     Default: axiom
@@ -61,7 +57,7 @@ Parameters:
     Type: String
     Default: 0.0.0.0/0
     AllowedPattern: '(\d{1,3}\.){3}\d{1,3}/\d{1,2}'
-    Description: CIDR for SSH access. Use your IP (e.g. 203.0.113.50/32) for security.
+    Description: CIDR for SSH access. Use your IP for security.
 
   DBMasterUsername:
     Type: String
@@ -81,7 +77,7 @@ Parameters:
     Type: String
     Default: db.t4g.micro
     AllowedValues: [db.t4g.micro, db.t4g.small, db.t4g.medium, db.t4g.large]
-    Description: db.t4g.micro (2 vCPU, 1 GB) is cheapest. db.t4g.small recommended for demo.
+    Description: db.t4g.micro is cheapest. db.t4g.small recommended for demo.
 
   JWTSecretKey:
     Type: String
@@ -101,16 +97,8 @@ Parameters:
     AllowedValues: ['Yes', 'No']
     Description: 'No = Redis runs locally on EC2 via Docker (simpler, cheaper for demo).'
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Conditions
-# ══════════════════════════════════════════════════════════════════════════════
-
 Conditions:
   CreateElastiCache: !Equals [!Ref IncludeElastiCache, 'Yes']
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Resources
-# ══════════════════════════════════════════════════════════════════════════════
 
 Resources:
 
@@ -272,7 +260,6 @@ Resources:
   EC2Role:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-ec2-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -283,9 +270,20 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AmazonTranscribeFullAccess
-        - arn:aws:iam::aws:policy/AmazonPollyFullAccess
         - arn:aws:iam::aws:policy/AmazonTextractFullAccess
+        - arn:aws:iam::aws:policy/AmazonRekognitionReadOnlyAccess
+        - arn:aws:iam::aws:policy/TranslateFullAccess
+        - arn:aws:iam::aws:policy/ComprehendReadOnly
+      Policies:
+        - PolicyName: TranscribeAndPollyAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - transcribe:*
+                  - polly:*
+                Resource: '*'
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-ec2-role'
@@ -293,12 +291,10 @@ Resources:
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceProfileName: !Sub '${ProjectName}-ec2-profile'
       Roles:
         - !Ref EC2Role
 
   # ── RDS PostgreSQL 16 ──────────────────────────────────────────────────────
-  # After deploy, connect and run: CREATE EXTENSION IF NOT EXISTS vector;
 
   RDSSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
@@ -326,7 +322,7 @@ Resources:
       MasterUserPassword: !Ref DBMasterPassword
       DBName: axiom
       DBSubnetGroupName: !Ref RDSSubnetGroup
-      VpcSecurityGroupIds:
+      VPCSecurityGroups:
         - !Ref RDSSecurityGroup
       StorageEncrypted: true
       BackupRetentionPeriod: 1
@@ -336,7 +332,7 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-rds'
 
-  # ── ElastiCache Redis (conditional — only when IncludeElastiCache = Yes) ──
+  # ── ElastiCache Redis ─────────────────────────────────────────────────────
 
   RedisSubnetGroup:
     Type: AWS::ElastiCache::SubnetGroup
@@ -355,14 +351,14 @@ Resources:
       Engine: redis
       CacheNodeType: cache.t3.micro
       NumCacheNodes: 1
-      VpcSecurityGroupIds:
+      SecurityGroupIds:
         - !GetAtt RedisSecurityGroup.GroupId
       CacheSubnetGroupName: !Ref RedisSubnetGroup
       Tags:
         - Key: Name
           Value: !Sub '${ProjectName}-redis'
 
-  # ── S3 Buckets (all block public access) ──────────────────────────────────
+  # ── S3 Buckets ────────────────────────────────────────────────────────────
 
   SourceDocsBucket:
     Type: AWS::S3::Bucket
@@ -446,49 +442,36 @@ Resources:
               exec > /var/log/axiom-setup.log 2>&1
 
               echo "=== Axiom EC2 bootstrap starting ==="
-
-              # ── System packages ──────────────────────────────────
               dnf update -y
               dnf install -y docker git
 
-              # ── Docker ───────────────────────────────────────────
               systemctl enable docker
               systemctl start docker
               usermod -aG docker ec2-user
 
-              # ── Docker Compose ───────────────────────────────────
               mkdir -p /usr/local/lib/docker/cli-plugins
               curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
                 -o /usr/local/lib/docker/cli-plugins/docker-compose
               chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
               ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
 
-              # ── Certbot ──────────────────────────────────────────
               pip3 install certbot || true
 
-              # ── Pre-generate .env ────────────────────────────────
               mkdir -p /home/ec2-user/app/backend
               cat > /home/ec2-user/app/backend/.env << 'ENVEOF'
-              # ── Database ──────────────────────────────────────────────
               DATABASE_URL=postgresql+asyncpg://${DBUser}:${DBPass}@${DBEndpoint}:5432/axiom
               SYNC_DATABASE_URL=postgresql+psycopg2://${DBUser}:${DBPass}@${DBEndpoint}:5432/axiom
               DATABASE_SSL=true
 
-              # ── Redis ─────────────────────────────────────────────────
-              # Using local Docker Redis. If you deployed ElastiCache, update
-              # this with the endpoint from the CloudFormation Outputs tab.
               REDIS_URL=redis://localhost:6379/0
 
-              # ── AWS (IAM role handles credentials — leave blank) ──────
               AWS_DEFAULT_REGION=${Region}
               AWS_ACCESS_KEY_ID=
               AWS_SECRET_ACCESS_KEY=
 
-              # ── Bedrock ───────────────────────────────────────────────
               BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-6
               BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
 
-              # ── S3 Buckets ────────────────────────────────────────────
               S3_BUCKET_NAME=${SourceBucket}
               S3_PRESIGNED_URL_EXPIRY=3600
               TRANSCRIBE_OUTPUT_BUCKET=${TranscribeBucket}
@@ -497,18 +480,18 @@ Resources:
               POLLY_VOICE_ID=Matthew
               POLLY_ENGINE=neural
 
-              # ── JWT ───────────────────────────────────────────────────
+              TRANSLATE_TERMINOLOGY_NAME=axiom-stem-terms
+              COMPREHEND_LANGUAGE_CODE=en
+
               JWT_SECRET_KEY=${JWTKey}
               JWT_ALGORITHM=HS256
               JWT_EXPIRE_MINUTES=1440
 
-              # ── App / Security ────────────────────────────────────────
               ENVIRONMENT=production
               LOG_LEVEL=info
               CORS_ORIGINS=${CORSValue}
               UPLOAD_MAX_BYTES=52428800
 
-              # ── Demo Auth (disabled for production) ───────────────────
               ENABLE_DEMO_AUTH=false
               RUN_SEED_ON_STARTUP=false
               ENVEOF
@@ -516,7 +499,6 @@ Resources:
               chown -R ec2-user:ec2-user /home/ec2-user/app
 
               echo "=== Axiom EC2 bootstrap complete ==="
-              echo "Next: SSH in, clone your repo into /home/ec2-user/app, copy .env into backend/, and run docker-compose up"
             - DBUser: !Ref DBMasterUsername
               DBPass: !Ref DBMasterPassword
               DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
@@ -534,12 +516,9 @@ Resources:
       AllocationId: !GetAtt ElasticIP.AllocationId
       InstanceId: !Ref EC2Instance
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Outputs
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Outputs ───────────────────────────────────────────────────────────────
 
 Outputs:
-
   EC2PublicIP:
     Description: Elastic IP for the backend instance
     Value: !Ref ElasticIP
@@ -558,7 +537,7 @@ Outputs:
 
   RedisEndpoint:
     Condition: CreateElastiCache
-    Description: 'ElastiCache Redis endpoint — update REDIS_URL in .env to: redis://<this-value>:6379/0'
+    Description: 'ElastiCache Redis endpoint'
     Value: !GetAtt RedisCluster.RedisEndpoint.Address
 
   SourceDocsBucketName:
@@ -576,22 +555,3 @@ Outputs:
   TextractBucketName:
     Description: S3 bucket for Textract OCR output
     Value: !Ref TextractBucket
-
-  PostDeploySteps:
-    Description: Steps to complete after stack creation
-    Value: !Sub >-
-      POST-DEPLOY CHECKLIST:
-      (1) Request Bedrock model access in ${AWS::Region} if not already done (Claude Sonnet 4.6 + Titan Embeddings v2).
-      (2) SSH in: ssh -i <key>.pem ec2-user@${ElasticIP}
-      (3) Clone repo: cd /home/ec2-user/app && git clone <your-repo-url> .
-      (4) The .env is pre-generated at /home/ec2-user/app/backend/.env with all values filled in.
-      (5) Enable pgvector on RDS — from EC2 install psql and run:
-          sudo dnf install -y postgresql16 &&
-          psql "host=${RDSInstance.Endpoint.Address} dbname=axiom user=${DBMasterUsername} sslmode=require"
-          then: CREATE EXTENSION IF NOT EXISTS vector;
-      (6) Run Alembic migrations: cd backend && alembic upgrade head
-      (7) Optional first-time seed: RUN_SEED_ON_STARTUP=true python -m scripts.seed
-      (8) Start services: docker-compose up -d
-      (9) Setup SSL: sudo certbot certonly --standalone -d ${ElasticIP}.sslip.io
-      (10) Deploy frontend on AWS Amplify with NEXT_PUBLIC_API_URL=https://${ElasticIP}.sslip.io
-      (11) Update CORS_ORIGINS in .env to your Amplify URL, then restart: docker-compose restart
