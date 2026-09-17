@@ -38,7 +38,7 @@ export type ActivityType =
   | "wrong_on_purpose"
   | "scenario"
   | "feynman"
-  | "audio_overview";
+  | "mini_podcast";
 
 export type QuizQuestionType =
   | "multi_choice"
@@ -158,8 +158,8 @@ export const INITIAL_ACTIVITIES: Activity[] = [
   },
   {
     id: "act_ao_1",
-    type: "audio_overview",
-    title: "Audio Summary: Determinants",
+    type: "mini_podcast",
+    title: "Mini Podcast: Determinants",
     topic: "Determinants",
     xp: 40,
     payload: {
@@ -214,8 +214,8 @@ export const TYPE_CONFIG: Partial<Record<
     color: "text-purple-500",
     bg: "bg-purple-50",
   },
-  audio_overview: {
-    label: "Audio Overview",
+  mini_podcast: {
+    label: "Mini Podcast",
     icon: Headphones,
     color: "text-teal-500",
     bg: "bg-teal-50",
@@ -232,7 +232,7 @@ export const XP_BY_TYPE: Partial<Record<ActivityType, number>> = {
   wrong_on_purpose: 75,
   scenario: 100,
   feynman: 50,
-  audio_overview: 40,
+  mini_podcast: 40,
 };
 
 const DEFAULT_XP = 30;
@@ -333,7 +333,7 @@ export function ActivityFeed({
     "wrong_on_purpose",
     "scenario",
     "feynman",
-    "audio_overview",
+    "mini_podcast",
   ];
 
   return (
@@ -756,7 +756,7 @@ function SubmitRow({
 interface RendererProps {
   activity: Activity;
   onDiscussWithTutor?: (context: string) => void;
-  onSaveResult?: (result: { lastResponse: string; lastFeedback: FeedbackState }) => void;
+  onSaveResult?: (result: { lastResponse: string; lastFeedback?: FeedbackState }) => void;
 }
 
 // ── Flashcard Deck ──────────────────────────────────────────────────────────
@@ -780,10 +780,16 @@ function FlashcardDeckActivity({ activity, onSaveResult }: RendererProps) {
     return null;
   })();
 
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [revealed, setRevealed] = useState<boolean[]>(() => new Array(cards.length).fill(false));
   const [assessments, setAssessments] = useState<FlashAssessment[]>(() => savedAssessments ?? new Array(cards.length).fill(null));
-  const [showSummary, setShowSummary] = useState(() => savedAssessments !== null);
+  const [showSummary, setShowSummary] = useState(
+    () => savedAssessments !== null && savedAssessments.every((a) => a !== null),
+  );
+
+  const savedIndex = savedAssessments ? savedAssessments.findIndex((a) => a === null) : -1;
+  const [currentIndex, setCurrentIndex] = useState(() =>
+    savedIndex >= 0 ? savedIndex : 0,
+  );
 
   const totalCount = cards.length;
   const knewCount = assessments.filter((a) => a === "knew").length;
@@ -804,8 +810,11 @@ function FlashcardDeckActivity({ activity, onSaveResult }: RendererProps) {
       const knew = next.filter((a) => a === "knew").length;
       onSaveResult?.({ lastResponse: JSON.stringify(next), lastFeedback: { is_correct: knew > totalCount / 2, feedback: `${knew}/${totalCount} cards mastered` } });
       setShowSummary(true);
-    } else if (currentIndex < totalCount - 1) {
-      setCurrentIndex((i) => i + 1);
+    } else {
+      onSaveResult?.({ lastResponse: JSON.stringify(next) });
+      if (currentIndex < totalCount - 1) {
+        setCurrentIndex((i) => i + 1);
+      }
     }
   };
 
@@ -994,6 +1003,25 @@ function QuizProgressDots({ total, current, answered }: { total: number; current
   );
 }
 
+function formatStudentAnswer(q: QuizQuestionDef, answer: any): string | null {
+  if (answer === undefined || answer === null) return null;
+  switch (q.type) {
+    case "multi_choice": return typeof answer === "number" ? `${String.fromCharCode(65 + answer)}) ${q.options[answer] ?? ""}` : null;
+    case "true_false": return typeof answer === "boolean" ? (answer ? "True" : "False") : null;
+    case "short_answer": return typeof answer === "string" && answer.trim() ? answer : null;
+    case "fill_blank": return Array.isArray(answer) ? answer.join(", ") : null;
+  }
+}
+
+function formatCorrectAnswer(q: QuizQuestionDef): string | null {
+  switch (q.type) {
+    case "multi_choice": return `${String.fromCharCode(65 + q.correct_index)}) ${q.options[q.correct_index]}`;
+    case "true_false": return q.correct_answer ? "True" : "False";
+    case "short_answer": return null;
+    case "fill_blank": return q.blanks.join(", ");
+  }
+}
+
 function QuizScoreSummary({ questions, answers, score, total, activityTitle, onDiscussWithTutor }: { questions: QuizQuestionDef[]; answers: Record<number, any>; score: number; total: number; activityTitle: string; onDiscussWithTutor?: (ctx: string) => void }) {
   const pct = total > 0 ? Math.round((score / total) * 100) : 0;
   const passed = score > total / 2;
@@ -1011,14 +1039,26 @@ function QuizScoreSummary({ questions, answers, score, total, activityTitle, onD
             const result = gradeQuestion(q, answers[i]);
             const text = getQuestionText(q);
             const preview = text.length > 80 ? text.slice(0, 80) + "..." : text;
+            const studentAnswer = formatStudentAnswer(q, answers[i]);
+            const correctAnswer = formatCorrectAnswer(q);
             return (
-              <div key={i} className="flex items-center gap-3 px-4 py-3">
-                {result.needsReview ? <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" /> : result.correct ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" /> : <XCircle className="h-4 w-4 shrink-0 text-red-500" />}
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">{preview}</p>
-                  <p className="text-xs text-muted-foreground">{q.type === "multi_choice" ? "Multiple Choice" : q.type === "true_false" ? "True / False" : q.type === "short_answer" ? "Short Answer" : "Fill in the Blank"}</p>
+              <div key={i} className="px-4 py-3">
+                <div className="flex items-center gap-3">
+                  {result.needsReview ? <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" /> : result.correct ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" /> : <XCircle className="h-4 w-4 shrink-0 text-red-500" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm">{preview}</p>
+                    <p className="text-xs text-muted-foreground">{q.type === "multi_choice" ? "Multiple Choice" : q.type === "true_false" ? "True / False" : q.type === "short_answer" ? "Short Answer" : "Fill in the Blank"}</p>
+                  </div>
+                  <span className={`shrink-0 text-xs font-medium ${result.needsReview ? "text-amber-600" : result.correct ? "text-emerald-600" : "text-red-600"}`}>{result.needsReview ? "Needs review" : result.correct ? "Correct" : "Incorrect"}</span>
                 </div>
-                <span className={`shrink-0 text-xs font-medium ${result.needsReview ? "text-amber-600" : result.correct ? "text-emerald-600" : "text-red-600"}`}>{result.needsReview ? "Needs review" : result.correct ? "Correct" : "Incorrect"}</span>
+                {studentAnswer && (
+                  <div className="ml-7 mt-2 space-y-1">
+                    <p className="text-xs"><span className="font-medium text-muted-foreground">Your answer:</span> <span className={result.correct ? "text-emerald-700" : "text-red-700"}>{studentAnswer}</span></p>
+                    {!result.correct && !result.needsReview && correctAnswer && (
+                      <p className="text-xs"><span className="font-medium text-muted-foreground">Correct answer:</span> <span className="text-emerald-700">{correctAnswer}</span></p>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1047,15 +1087,21 @@ function QuizScoreSummary({ questions, answers, score, total, activityTitle, onD
 
 function QuizActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const questions: QuizQuestionDef[] = (activity.payload as any)?.questions ?? [];
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<number, any>>({});
-  const [submitted, setSubmitted] = useState(false);
 
-  useEffect(() => {
-    if (activity.lastResponse) {
-      try { const parsed = JSON.parse(activity.lastResponse); setAnswers(parsed); setSubmitted(true); } catch { /* ignore */ }
-    }
-  }, [activity.lastResponse]);
+  const restoredAnswers: Record<number, any> = (() => {
+    if (!activity.lastResponse) return {};
+    try { return JSON.parse(activity.lastResponse); } catch { return {}; }
+  })();
+  const isCompleted = !!activity.lastFeedback;
+
+  const firstUnanswered = (() => {
+    for (let i = 0; i < questions.length; i++) { if (restoredAnswers[i] === undefined) return i; }
+    return 0;
+  })();
+
+  const [currentIndex, setCurrentIndex] = useState(isCompleted ? 0 : firstUnanswered);
+  const [answers, setAnswers] = useState<Record<number, any>>(restoredAnswers);
+  const [submitted, setSubmitted] = useState(isCompleted);
 
   if (questions.length === 0) return <div className="rounded-lg border bg-card px-5 py-8 text-center"><p className="text-sm text-muted-foreground">No questions found in this quiz.</p></div>;
 
@@ -1068,7 +1114,12 @@ function QuizActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererPr
     return s;
   };
 
-  const handleAnswer = (value: any) => { if (!submitted) setAnswers((prev) => ({ ...prev, [currentIndex]: value })); };
+  const handleAnswer = (value: any) => {
+    if (submitted) return;
+    const updated = { ...answers, [currentIndex]: value };
+    setAnswers(updated);
+    onSaveResult?.({ lastResponse: JSON.stringify(updated) });
+  };
 
   const handleSubmit = () => {
     setSubmitted(true);
@@ -1115,6 +1166,11 @@ function WrongOnPurposeActivity({ activity, onDiscussWithTutor, onSaveResult }: 
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const p = activity.payload ?? {};
+  const draftRef = useRef(response);
+  draftRef.current = response;
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  useEffect(() => () => { if (draftRef.current.trim() && !feedbackRef.current) onSaveResult?.({ lastResponse: draftRef.current }); }, [onSaveResult]);
 
   const handleSubmit = async () => {
     if (!response.trim() || isLoading) return;
@@ -1191,6 +1247,11 @@ function ScenarioActivity({ activity, onDiscussWithTutor, onSaveResult }: Render
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const p = activity.payload ?? {};
+  const draftRef = useRef(response);
+  draftRef.current = response;
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  useEffect(() => () => { if (draftRef.current.trim() && !feedbackRef.current) onSaveResult?.({ lastResponse: draftRef.current }); }, [onSaveResult]);
 
   const handleSubmit = async () => {
     if (!response.trim() || isLoading) return;
@@ -1254,6 +1315,11 @@ function FeynmanActivity({ activity, onDiscussWithTutor, onSaveResult }: Rendere
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const p = activity.payload ?? {};
+  const draftRef = useRef(response);
+  draftRef.current = response;
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  useEffect(() => () => { if (draftRef.current.trim() && !feedbackRef.current) onSaveResult?.({ lastResponse: draftRef.current }); }, [onSaveResult]);
 
   const handleSubmit = async () => {
     if (!response.trim() || isLoading) return;
@@ -1320,17 +1386,25 @@ function FeynmanActivity({ activity, onDiscussWithTutor, onSaveResult }: Rendere
   );
 }
 
-function AudioOverviewActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const;
+
+function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const [response, setResponse] = useState(activity.lastResponse ?? "");
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const p = activity.payload ?? {};
+  const draftRef = useRef(response);
+  draftRef.current = response;
+  const feedbackRef = useRef(feedback);
+  feedbackRef.current = feedback;
+  useEffect(() => () => { if (draftRef.current.trim() && !feedbackRef.current) onSaveResult?.({ lastResponse: draftRef.current }); }, [onSaveResult]);
 
   const handleListen = () => {
     if ("speechSynthesis" in window && p.summary) {
       const utter = new SpeechSynthesisUtterance(p.summary);
-      utter.rate = 0.95;
+      utter.rate = playbackRate;
       utter.onend = () => setIsPlaying(false);
       setIsPlaying(true);
       window.speechSynthesis.cancel();
@@ -1373,7 +1447,7 @@ function AudioOverviewActivity({ activity, onDiscussWithTutor, onSaveResult }: R
       <div className="flex items-center justify-between rounded-lg border bg-secondary/20 p-4">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Audio Summary
+            Mini Podcast
           </p>
           <p className="mt-1 text-sm font-medium">{activity.topic}</p>
         </div>
@@ -1388,6 +1462,24 @@ function AudioOverviewActivity({ activity, onDiscussWithTutor, onSaveResult }: R
           <Headphones className="h-4 w-4" />
           {isPlaying ? "Stop" : "Listen"}
         </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">Speed</span>
+        <div className="flex gap-1">
+          {SPEED_OPTIONS.map((speed) => (
+            <button
+              key={speed}
+              onClick={() => setPlaybackRate(speed)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                playbackRate === speed
+                  ? "bg-teal-100 text-teal-700"
+                  : "text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              {speed}x
+            </button>
+          ))}
+        </div>
       </div>
       <details className="group rounded-lg border">
         <summary className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm text-muted-foreground hover:text-foreground">
@@ -1450,7 +1542,7 @@ const ACTIVITY_RENDERERS: Partial<Record<
   wrong_on_purpose: WrongOnPurposeActivity,
   scenario: ScenarioActivity,
   feynman: FeynmanActivity,
-  audio_overview: AudioOverviewActivity,
+  mini_podcast: MiniPodcastActivity,
 };
 
 // ── Fullscreen overlay ───────────────────────────────────────────────────────
@@ -1519,7 +1611,7 @@ export function ActivityOverlay({
                 onActivitiesChange?.(
                   activities.map((a) =>
                     a.id === activity.id
-                      ? { ...a, lastResponse: result.lastResponse, lastFeedback: result.lastFeedback }
+                      ? { ...a, lastResponse: result.lastResponse, ...(result.lastFeedback ? { lastFeedback: result.lastFeedback } : {}) }
                       : a
                   )
                 );

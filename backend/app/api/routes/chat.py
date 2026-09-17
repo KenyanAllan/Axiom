@@ -111,6 +111,9 @@ get_topic_claims → create_activities_for_claim)
 - Always explain what you did after using tools — tell the user what was \
 created, added, or found
 - Keep tool usage focused on what the user actually asked for
+- When the user asks about the meaning or definition of a term, use \
+search_glossary to look it up
+- When you find glossary results, present the term and definition clearly
 - For simple knowledge questions, just answer from the provided context \
 without using tools"""
 
@@ -206,11 +209,14 @@ async def _rag_converse_with_tools(
                 classroom_id=classroom_id,
             )
 
-            tool_calls_made.append({
+            tool_call_entry = {
                 "tool": tool_name,
                 "input": tool_input,
                 "output_summary": _summarize_result(result),
-            })
+            }
+            if tool_name == "search_glossary" and "terms" in result:
+                tool_call_entry["data"] = result["terms"]
+            tool_calls_made.append(tool_call_entry)
 
             tool_results.append({
                 "toolResult": {

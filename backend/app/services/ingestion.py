@@ -225,6 +225,28 @@ Return a JSON object with:
 Return ONLY the JSON object. No markdown fences.
 """
 
+GLOSSARY_EXTRACTION_PROMPT = """\
+You are a glossary extraction engine for a technical learning platform.
+
+Given a MARKDOWN CHUNK from a textbook or document, identify key terms, concepts,
+and definitions that a student would need to understand.
+
+Return a JSON object with:
+- "terms": an array of objects, each with:
+  - "term": the glossary term or concept name (< 100 chars)
+  - "definition": a clear, concise definition (1-3 sentences)
+
+Focus on:
+- Technical terms being introduced or defined
+- Named theorems, algorithms, or methods
+- Domain-specific vocabulary
+- Acronyms and abbreviations (with expansion)
+
+Skip common English words and terms that are not specific to the subject matter.
+If no glossary-worthy terms are found, return {"terms": []}.
+Return ONLY the JSON object. No markdown fences.
+"""
+
 
 def _call_bedrock_extract(chunk_text: str) -> dict[str, Any] | None:
     """Call Bedrock Claude to extract topic + claims from a chunk."""
@@ -283,6 +305,97 @@ def _call_bedrock_embed(text: str) -> list[float] | None:
         return None
 
 
+def _call_bedrock_extract_glossary(chunk_text: str) -> list[dict[str, str]]:
+    """Call Bedrock Claude to extract glossary terms from a chunk."""
+    kwargs: dict[str, Any] = {"region_name": settings.aws_default_region}
+    if settings.aws_access_key_id:
+        kwargs["aws_access_key_id"] = settings.aws_access_key_id
+        kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+    client = boto3.client("bedrock-runtime", **kwargs)
+
+    try:
+        response = client.converse(
+            modelId=settings.bedrock_model_id,
+            system=[{"text": GLOSSARY_EXTRACTION_PROMPT}],
+            messages=[{
+                "role": "user",
+                "content": [{"text": f"## MARKDOWN CHUNK\n\n{chunk_text}"}],
+            }],
+            inferenceConfig={"maxTokens": 2048, "temperature": 0.2},
+        )
+
+        raw = response["output"]["message"]["content"][0]["text"]
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+            else:
+                logger.error("Failed to parse glossary JSON: %s", raw[:200])
+                return []
+
+        return data.get("terms", [])
+
+    except Exception as exc:
+        logger.error("Bedrock glossary extraction failed: %s", exc)
+        return []
+
+
+def _find_or_create_glossary_term_sync(
+    db: Any,
+    workspace_id: int,
+    source_doc_id: int,
+    term_text: str,
+    definition: str,
+    embedding: list[float] | None,
+    source_ref: dict | None,
+) -> None:
+    """Insert or deduplicate a glossary term using cosine similarity."""
+    from sqlalchemy import text as sa_text
+    from app.models.tables import GlossaryTerm
+
+    if embedding is not None:
+        result = db.execute(
+            sa_text("""
+                SELECT id, term, definition, (embedding <=> :emb::vector) as distance
+                FROM glossary_terms
+                WHERE workspace_id = :ws_id
+                  AND embedding IS NOT NULL
+                ORDER BY embedding <=> :emb::vector
+                LIMIT 1
+            """),
+            {"emb": str(embedding), "ws_id": workspace_id},
+        )
+        row = result.fetchone()
+        if row is not None:
+            similarity = 1.0 - row.distance
+            if similarity >= SIMILARITY_THRESHOLD:
+                existing = db.get(GlossaryTerm, row.id)
+                if existing and len(definition) > len(existing.definition):
+                    existing.definition = definition
+                return
+
+    existing = db.execute(
+        sa_text("SELECT id FROM glossary_terms WHERE workspace_id = :ws_id AND term = :term"),
+        {"ws_id": workspace_id, "term": term_text},
+    ).fetchone()
+    if existing is not None:
+        return
+
+    gt = GlossaryTerm(
+        workspace_id=workspace_id,
+        source_document_id=source_doc_id,
+        term=term_text,
+        definition=definition,
+        source_ref=source_ref,
+        is_auto_extracted=True,
+        embedding=embedding,
+    )
+    db.add(gt)
+    db.flush()
+
+
 # ── Download from S3 ─────────────────────────────────────────────────────────
 
 
@@ -325,12 +438,12 @@ def ingest_source_document(
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
-    from app.models.tables import AtomicClaim, SourceDocument, Topic
+    from app.models.tables import AtomicClaim, GlossaryTerm, SourceDocument, Topic
 
     engine = create_engine(settings.sync_database_url, pool_pre_ping=True)
     Session = sessionmaker(bind=engine)
 
-    stats = {"chunks": 0, "topics_created": 0, "topics_merged": 0, "claims_inserted": 0, "errors": 0}
+    stats = {"chunks": 0, "topics_created": 0, "topics_merged": 0, "claims_inserted": 0, "glossary_terms_inserted": 0, "errors": 0}
 
     # ── 1. Download ──────────────────────────────────────────────────────────
     logger.info("Downloading source doc %s from S3: %s", source_doc_id, s3_key)
@@ -457,6 +570,25 @@ def ingest_source_document(
                 )
                 db.merge(claim)
                 stats["claims_inserted"] += 1
+
+            # 4e. Extract and insert glossary terms
+            glossary_terms = _call_bedrock_extract_glossary(chunk["text"])
+            for gt_data in glossary_terms:
+                gt_term = gt_data.get("term", "").strip()
+                gt_def = gt_data.get("definition", "").strip()
+                if not gt_term or not gt_def:
+                    continue
+
+                gt_embedding = _call_bedrock_embed(f"{gt_term}: {gt_def}")
+                source_ref = {
+                    "chunk_index": chunk["index"],
+                    "text_excerpt": chunk["text"][:200],
+                }
+                _find_or_create_glossary_term_sync(
+                    db, workspace_id, source_doc_id,
+                    gt_term, gt_def, gt_embedding, source_ref,
+                )
+                stats["glossary_terms_inserted"] += 1
 
         db.commit()
 

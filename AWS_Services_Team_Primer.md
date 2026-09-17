@@ -91,7 +91,7 @@ This document breaks down every AWS service in our lean MVP architecture. It exp
 #### 8. Amazon Polly (Text-to-Speech)
 * **What it is in plain English:** A speech synthesis engine that turns written text into lifelike spoken audio.
 * **What it does for us:**
-  * Generates **Audio Overviews** of wiki pages (NotebookLM-style audio summaries).
+  * Generates **Mini Podcasts** of wiki pages (NotebookLM-style audio summaries).
   * Generates "Speech Marks" (metadata showing the exact millisecond each word is spoken), allowing our frontend UI to highlight text on screen in sync with the audio.
 
 ---

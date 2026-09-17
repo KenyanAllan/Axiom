@@ -15,7 +15,7 @@ export type ActivityType =
   | "wrong_on_purpose"
   | "scenario"
   | "feynman"
-  | "audio_overview"
+  | "mini_podcast"
   | "quiz";
 
 export interface UserProfile {
@@ -238,6 +238,28 @@ export interface ChatSessionResponse {
   updated_at: string;
 }
 
+// ── Glossary types ───────────────────────────────────────────────────────────
+
+export interface GlossaryTermResponse {
+  id: number;
+  workspace_id: number;
+  source_document_id: number | null;
+  term: string;
+  definition: string;
+  source_ref: {
+    chunk_index?: number;
+    text_excerpt?: string;
+  } | null;
+  is_auto_extracted: boolean;
+  created_at: string;
+}
+
+export interface GlossarySearchResponse {
+  query: string;
+  results: GlossaryTermResponse[];
+  total: number;
+}
+
 // ── View tab types ────────────────────────────────────────────────────────────
 
 export type ViewTab =
@@ -246,4 +268,5 @@ export type ViewTab =
   | "wiki"
   | "nodemap"
   | "sources"
+  | "glossary"
   | "dashboard";

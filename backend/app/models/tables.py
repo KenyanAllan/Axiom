@@ -113,6 +113,7 @@ class Workspace(Base):
     topics = relationship("Topic", back_populates="workspace", lazy="selectin")
     activities = relationship("Activity", back_populates="workspace", lazy="selectin")
     source_documents = relationship("SourceDocument", back_populates="workspace", lazy="selectin")
+    glossary_terms = relationship("GlossaryTerm", back_populates="workspace", lazy="selectin")
 
 
 # ── Source Documents (Layer 1 Ground-Truth) ──────────────────────────────────
@@ -206,6 +207,38 @@ class AtomicClaim(Base):
     topic = relationship("Topic", back_populates="claims")
     source_document = relationship("SourceDocument")
     masteries = relationship("UserMastery", back_populates="claim", lazy="selectin")
+
+
+# ── Glossary Terms ─────────────────────────────────────────────────────────────
+
+
+class GlossaryTerm(Base):
+    __tablename__ = "glossary_terms"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    source_document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    term = Column(String, nullable=False)
+    definition = Column(Text, nullable=False)
+    source_ref = Column(JSONB, nullable=True)
+    is_auto_extracted = Column(Boolean, nullable=False, default=True)
+    embedding = Column(Vector(1024))
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    workspace = relationship("Workspace", back_populates="glossary_terms")
+    source_document = relationship("SourceDocument")
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "term", name="uq_workspace_term"),
+    )
 
 
 # ── User Mastery ────────────────────────────────────────────────────────────────

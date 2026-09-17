@@ -6,6 +6,7 @@ existing service functions. Only used by the chat endpoint.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -15,10 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.tables import (
     Activity,
     AtomicClaim,
+    GlossaryTerm,
     Topic,
     UserMastery,
     Workspace,
 )
+from app.services.bedrock import generate_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +84,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "enum": ["flashcard", "true_false", "multi_choice"],
+                            "enum": ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman"],
                         },
-                        "description": "Which activity types to generate. Defaults to all three.",
+                        "description": "Which activity types to generate. Defaults to all six.",
                     },
                 },
                 "required": ["claim_id"],
@@ -179,6 +182,27 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             }
         },
     },
+    {
+        "name": "search_glossary",
+        "description": (
+            "Search the workspace glossary for a term or concept. "
+            "Returns matching glossary terms with their definitions. "
+            "Use this when the student asks about the meaning of a term, "
+            "concept, or wants a definition."
+        ),
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The term or concept to search for.",
+                    },
+                },
+                "required": ["query"],
+            }
+        },
+    },
 ]
 
 
@@ -221,6 +245,9 @@ async def execute_tool(
 
         elif tool_name == "get_mastery_status":
             return await _tool_mastery(db, user_id, workspace_id, tool_input)
+
+        elif tool_name == "search_glossary":
+            return await _tool_search_glossary(db, workspace_id, tool_input)
 
         else:
             return {"error": f"Unknown tool: {tool_name}"}
@@ -314,7 +341,7 @@ async def _tool_create_activities(
     if claim is None:
         return {"error": f"Claim '{claim_id}' not found"}
 
-    types = tool_input.get("types", ["flashcard", "true_false", "multi_choice"])
+    types = tool_input.get("types", ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman"])
 
     activities = await generate_basic_activities(
         db=db,
@@ -473,4 +500,56 @@ async def _tool_mastery(
         "total": len(items),
         "mastered_count": mastered,
         "message": f"Mastered {mastered}/{len(items)} claims.",
+    }
+
+
+async def _tool_search_glossary(
+    db: AsyncSession, workspace_id: int, tool_input: dict
+) -> dict:
+    query = tool_input.get("query", "")
+    if not query:
+        return {"error": "query is required"}
+
+    embedding = await asyncio.to_thread(generate_embedding, query)
+
+    stmt = (
+        select(
+            GlossaryTerm.id,
+            GlossaryTerm.term,
+            GlossaryTerm.definition,
+            GlossaryTerm.source_document_id,
+            GlossaryTerm.source_ref,
+            GlossaryTerm.embedding.cosine_distance(embedding).label("distance"),
+        )
+        .where(
+            GlossaryTerm.workspace_id == workspace_id,
+            GlossaryTerm.embedding.isnot(None),
+        )
+        .order_by("distance")
+        .limit(5)
+    )
+    rows = (await db.execute(stmt)).all()
+
+    terms = []
+    for row in rows:
+        similarity = round(1.0 - (row.distance or 1.0), 4)
+        if similarity < 0.5:
+            continue
+        terms.append({
+            "id": row.id,
+            "term": row.term,
+            "definition": row.definition,
+            "source_document_id": row.source_document_id,
+            "source_ref": row.source_ref,
+            "similarity": similarity,
+        })
+
+    return {
+        "terms": terms,
+        "total": len(terms),
+        "message": (
+            f"Found {len(terms)} glossary terms matching '{query}'."
+            if terms
+            else f"No glossary terms found for '{query}'."
+        ),
     }

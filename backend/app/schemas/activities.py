@@ -20,7 +20,7 @@ ActivityType = Literal[
     "wrong_on_purpose",
     "scenario",
     "feynman",
-    "audio_overview",
+    "mini_podcast",
     "quiz",
 ]
 

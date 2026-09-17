@@ -10,6 +10,8 @@ import type {
   EvaluateRequest,
   EvaluateResult,
   FrontierResponse,
+  GlossarySearchResponse,
+  GlossaryTermResponse,
   GraphResponse,
   HistoryEvent,
   MasteryEntry,
@@ -373,4 +375,73 @@ export async function fetchStudentProgress(
   );
   if (!res.ok) throw new Error(`Student progress fetch failed: ${res.status}`);
   return res.json();
+}
+
+// ── Glossary ─────────────────────────────────────────────────────────────────
+
+export async function fetchGlossaryTerms(
+  userId: string,
+  workspaceId: number = DEMO_WORKSPACE_ID
+): Promise<GlossaryTermResponse[]> {
+  const res = await fetch(
+    `${BASE}/api/glossary?workspace_id=${workspaceId}`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`Glossary fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function searchGlossary(
+  userId: string,
+  query: string,
+  workspaceId: number = DEMO_WORKSPACE_ID,
+  limit: number = 20
+): Promise<GlossarySearchResponse> {
+  const res = await fetch(`${BASE}/api/glossary/search`, {
+    method: "POST",
+    headers: headers(userId),
+    body: JSON.stringify({ query, workspace_id: workspaceId, limit }),
+  });
+  if (!res.ok) throw new Error(`Glossary search failed: ${res.status}`);
+  return res.json();
+}
+
+export async function createGlossaryTerm(
+  userId: string,
+  term: string,
+  definition: string,
+  workspaceId: number = DEMO_WORKSPACE_ID
+): Promise<GlossaryTermResponse> {
+  const res = await fetch(`${BASE}/api/glossary`, {
+    method: "POST",
+    headers: headers(userId),
+    body: JSON.stringify({ workspace_id: workspaceId, term, definition }),
+  });
+  if (!res.ok) throw new Error(`Create glossary term failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateGlossaryTerm(
+  userId: string,
+  termId: number,
+  data: { term?: string; definition?: string }
+): Promise<GlossaryTermResponse> {
+  const res = await fetch(`${BASE}/api/glossary/${termId}`, {
+    method: "PUT",
+    headers: headers(userId),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Update glossary term failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteGlossaryTerm(
+  userId: string,
+  termId: number
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/glossary/${termId}`, {
+    method: "DELETE",
+    headers: headers(userId),
+  });
+  if (!res.ok) throw new Error(`Delete glossary term failed: ${res.status}`);
 }

@@ -64,7 +64,7 @@ async def generate_basic_activities(
     activity types to generate (default: all three).
     """
     if types is None:
-        types = ["flashcard", "true_false", "multi_choice", "fill_blank"]
+        types = ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman"]
 
     activities: list[Activity] = []
 
@@ -147,6 +147,45 @@ async def generate_basic_activities(
             db.add(activity)
             activities.append(activity)
 
+    # ── Wrong on Purpose ─────────────────────────────────────────────────────
+    if "wrong_on_purpose" in types:
+        wop_payload = _build_wrong_on_purpose(claim)
+        if wop_payload:
+            activity = Activity(
+                workspace_id=workspace_id,
+                creator_id=creator_id,
+                scope="STUDENT_PERSONAL",
+                type="wrong_on_purpose",
+                title=f"Spot the Flaw: {claim.title}",
+                difficulty=2,
+                target_claim_ids=[claim.id],
+                payload=wop_payload,
+            )
+            db.add(activity)
+            activities.append(activity)
+
+    # ── Feynman (teach the concept) ──────────────────────────────────────────
+    if "feynman" in types:
+        activity = Activity(
+            workspace_id=workspace_id,
+            creator_id=creator_id,
+            scope="STUDENT_PERSONAL",
+            type="feynman",
+            title=f"Teach: {claim.title}",
+            difficulty=2,
+            target_claim_ids=[claim.id],
+            payload={
+                "concept": claim.title,
+                "prompt": (
+                    f"Explain {claim.title} in your own words as if teaching someone "
+                    f"who has never encountered this concept. Use an analogy if it helps."
+                ),
+                "key_points": _extract_key_points(claim.content),
+            },
+        )
+        db.add(activity)
+        activities.append(activity)
+
     await db.flush()
 
     # Refresh all activities to get auto-generated IDs
@@ -169,25 +208,118 @@ def _make_fill_blank(title: str, content: str) -> tuple[str | None, str]:
     return blanked, title
 
 
+def _build_wrong_on_purpose(claim: AtomicClaim) -> dict | None:
+    """Build a deterministic Wrong on Purpose payload from a claim.
+
+    Uses the claim's flawed_snippet if available.  Otherwise, generates a
+    plausible-looking wrong assertion by negating or distorting the claim
+    content.  Returns None if there's not enough material.
+    """
+    if claim.flawed_snippet:
+        return {
+            "claim": claim.diagnostic_prompt or f"Consider this statement about {claim.title}.",
+            "flawed_snippet": claim.flawed_snippet,
+            "prompt": "Identify the false premise in this reasoning.",
+        }
+
+    if not claim.content or len(claim.content) < 20:
+        return None
+
+    wrong_claim = _negate_claim(claim.content)
+    return {
+        "claim": wrong_claim,
+        "flawed_snippet": None,
+        "prompt": f"This statement about {claim.title} contains a deliberate error. Find and explain what is wrong.",
+    }
+
+
+def _negate_claim(content: str) -> str:
+    """Create a plausibly-wrong version of a claim by inserting a negation."""
+    negations = [
+        (r"\bis\b", "is not"),
+        (r"\bcan\b", "cannot"),
+        (r"\bwill\b", "will not"),
+        (r"\balways\b", "never"),
+        (r"\bevery\b", "no"),
+        (r"\bmust\b", "must not"),
+    ]
+    for pattern, replacement in negations:
+        if re.search(pattern, content, re.IGNORECASE):
+            return re.sub(pattern, replacement, content, count=1, flags=re.IGNORECASE)
+    return content + " This is always true regardless of context."
+
+
+def _extract_key_points(content: str) -> list[str]:
+    """Pull key phrases from claim content for rubric construction.
+
+    Splits on sentence boundaries and returns the most information-dense
+    fragments (those with the most non-stopword tokens).
+    """
+    sentences = re.split(r"(?<=[.!?])\s+", content.strip())
+    stopwords = {"the", "a", "an", "is", "are", "was", "were", "be", "been",
+                 "being", "have", "has", "had", "do", "does", "did", "will",
+                 "would", "could", "should", "may", "might", "shall", "can",
+                 "to", "of", "in", "for", "on", "with", "at", "by", "from",
+                 "as", "into", "through", "during", "before", "after", "and",
+                 "but", "or", "nor", "not", "so", "yet", "both", "either",
+                 "neither", "each", "every", "all", "any", "few", "more",
+                 "most", "other", "some", "such", "no", "only", "own", "same",
+                 "than", "too", "very", "just", "because", "if", "when", "that",
+                 "this", "it", "its", "they", "them", "their", "we", "our",
+                 "you", "your", "he", "she", "his", "her", "who", "which",
+                 "what", "where", "how", "about", "up", "out", "then", "also"}
+    scored = []
+    for s in sentences:
+        words = re.findall(r"\b[a-zA-Z]{2,}\b", s.lower())
+        density = sum(1 for w in words if w not in stopwords)
+        if density > 0:
+            scored.append((density, s.strip()))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [s for _, s in scored[:3]]
+
+
 async def generate_ai_activity(
     db: AsyncSession,
     claim: AtomicClaim,
     workspace_id: int,
     creator_id: str,
+    activity_type: str = "wrong_on_purpose",
 ) -> Activity | None:
     """Call Bedrock to generate a richer activity (wrong_on_purpose / scenario).
 
-    Returns None if Bedrock fails.
+    Returns None if Bedrock fails.  Falls back to a deterministic WoP if
+    Bedrock is unavailable.
     """
+    if activity_type not in ("wrong_on_purpose", "scenario"):
+        activity_type = "wrong_on_purpose"
+
+    # Try deterministic first for WoP — works without Bedrock
+    if activity_type == "wrong_on_purpose":
+        wop_payload = _build_wrong_on_purpose(claim)
+        if wop_payload:
+            activity = Activity(
+                workspace_id=workspace_id,
+                creator_id=creator_id,
+                scope="STUDENT_PERSONAL",
+                type="wrong_on_purpose",
+                title=f"Spot the Flaw: {claim.title}",
+                difficulty=2,
+                target_claim_ids=[claim.id],
+                payload=wop_payload,
+            )
+            db.add(activity)
+            await db.flush()
+            await db.refresh(activity)
+            return activity
+
     try:
-        from app.services.bedrock import grade_response  # reuse client infrastructure
+        from app.services.bedrock import grade_response
 
         prompt = (
-            f"Generate a scenario-based learning activity for this claim:\n"
+            f"Generate a {activity_type.replace('_', ' ')} learning activity for this claim:\n"
             f"Title: {claim.title}\n"
             f"Content: {claim.content}\n\n"
-            f"Return JSON with keys: type (wrong_on_purpose or scenario), "
-            f"title, payload (with question and context fields)."
+            f"Return JSON with keys: type, title, payload (with question and context fields)."
         )
 
         result = await asyncio.to_thread(
@@ -201,8 +333,8 @@ async def generate_ai_activity(
             workspace_id=workspace_id,
             creator_id=creator_id,
             scope="STUDENT_PERSONAL",
-            type="scenario",
-            title=f"Scenario: {claim.title}",
+            type=activity_type,
+            title=f"{activity_type.replace('_', ' ').title()}: {claim.title}",
             difficulty=2,
             target_claim_ids=[claim.id],
             payload={"question": result.get("feedback", claim.content), "context": claim.content},

@@ -136,10 +136,39 @@ async def evaluate_student_response(
         # Non-deterministic types: call Bedrock
         import asyncio
 
+        grading_rubric = rubric
+
+        if activity_type == "feynman":
+            payload = (activity_obj.payload or {}) if activity_obj else {}
+            key_points = payload.get("key_points", [])
+            points_text = "\n".join(f"- {kp}" for kp in key_points) if key_points else ""
+            grading_rubric = (
+                "Evaluate whether the student's explanation demonstrates genuine understanding "
+                "by teaching the concept clearly. Check for:\n"
+                "1. ACCURACY — the explanation must not introduce misconceptions.\n"
+                "2. COMPLETENESS — it should cover the core idea, not just restate the term.\n"
+                "3. CLARITY — a newcomer should be able to follow the explanation.\n"
+            )
+            if points_text:
+                grading_rubric += f"Key points the explanation should address:\n{points_text}\n"
+            grading_rubric += (
+                "Award 'understood' only if all three criteria are met. "
+                "Award 'neutral' if the explanation is partially correct but misses key points. "
+                "Award 'did_not_understand' if it contains errors or is too vague to teach from."
+            )
+        elif activity_type == "wrong_on_purpose":
+            grading_rubric = (
+                "The student was shown a deliberately flawed statement and asked to identify the error. "
+                "Evaluate whether the student correctly identified the flaw and explained WHY it is wrong. "
+                "Award 'understood' if they pinpoint the specific error and reasoning is sound. "
+                "Award 'neutral' if they sense something is off but can't articulate the exact flaw. "
+                "Award 'did_not_understand' if they miss the flaw or incorrectly validate the statement."
+            )
+
         grading = await asyncio.to_thread(
             grade_response,
             claim_content=claim.content,
-            rubric=rubric,
+            rubric=grading_rubric,
             student_response=student_response,
         )
         outcome, feedback = _map_bedrock_result(grading)

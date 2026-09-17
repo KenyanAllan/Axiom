@@ -29,6 +29,8 @@ import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import type { Activity } from "@/components/activity/ActivityFeed";
 import { SourceDocsManager } from "@/components/sources/SourceDocsManager";
 import { TeacherDashboard } from "@/components/dashboard/TeacherDashboard";
+import { GlossaryTab } from "@/components/glossary/GlossaryTab";
+import { GlossaryInlineCard } from "@/components/glossary/GlossaryInlineCard";
 import type { UserRole, ViewTab, GraphTopic, GraphEdge } from "@/lib/types";
 import { createChatSession, sendChatMessage, fetchGraph } from "@/lib/api";
 
@@ -80,6 +82,7 @@ interface ChatMessage {
   text: string;
   time: string;
   context?: ChatContextItem[];
+  sources?: Record<string, any> | null;
 }
 
 // ── Wiki data ─────────────────────────────────────────────────────────────────
@@ -552,6 +555,7 @@ export function CenterStage({
                 role: "assistant",
                 text: reply.content,
                 time: ts(),
+                sources: reply.sources,
               },
             ]);
           } catch {
@@ -599,6 +603,7 @@ export function CenterStage({
               role: "assistant",
               text: reply.content,
               time: ts(),
+              sources: reply.sources,
             },
           ]);
           setIsTyping(false);
@@ -683,6 +688,7 @@ export function CenterStage({
           <TabsTrigger value="wiki" />
           <TabsTrigger value="nodemap" />
           <TabsTrigger value="sources" />
+          <TabsTrigger value="glossary" />
           <TabsTrigger value="dashboard" />
         </TabsList>
 
@@ -710,7 +716,7 @@ export function CenterStage({
                 </div>
               ) : (
                 messages.map((msg) => (
-                  <ChatBubble key={msg.id} message={msg} />
+                  <ChatBubble key={msg.id} message={msg} onTabChange={onTabChange} />
                 ))
               )}
               {isTyping && (
@@ -747,6 +753,10 @@ export function CenterStage({
 
         <TabsContent value="sources" className="flex-1 overflow-y-auto">
           <SourceDocsManager userId={userId} userRole={userRole} />
+        </TabsContent>
+
+        <TabsContent value="glossary" className="flex-1 overflow-y-auto">
+          <GlossaryTab userId={userId} userRole={userRole} />
         </TabsContent>
 
         {isTeacher && (
@@ -825,7 +835,7 @@ export function CenterStage({
 
 // ── Chat Bubble ───────────────────────────────────────────────────────────────
 
-function ChatBubble({ message }: { message: ChatMessage }) {
+function ChatBubble({ message, onTabChange }: { message: ChatMessage; onTabChange?: (tab: ViewTab) => void }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -920,6 +930,16 @@ function ChatBubble({ message }: { message: ChatMessage }) {
             {message.time}
           </p>
         </div>
+        {!isUser &&
+          message.sources?.tool_calls
+            ?.filter((tc: any) => tc.tool === "search_glossary" && tc.data?.length > 0)
+            .map((tc: any, i: number) => (
+              <GlossaryInlineCard
+                key={i}
+                terms={tc.data}
+                onNavigateToGlossary={() => onTabChange?.("glossary")}
+              />
+            ))}
       </div>
       {isUser && (
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary">
@@ -1476,60 +1496,135 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
   const displayNodes = nodes ?? DEMO_NODES;
   const [hovered, setHovered] = useState<string | null>(null);
 
+  const svgW = Math.max(850, ...displayNodes.map((n) => n.x + 180));
+  const svgH = Math.max(380, ...displayNodes.map((n) => n.y + 80));
+
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const dragging = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+  const panStart = useRef({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const MIN_ZOOM = 0.3;
+  const MAX_ZOOM = 3;
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    setZoom((prev) => {
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev * factor));
+      const scale = next / prev;
+      setPan((p) => ({ x: mx - scale * (mx - p.x), y: my - scale * (my - p.y) }));
+      return next;
+    });
+  }, []);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest("[data-node]")) return;
+    dragging.current = true;
+    dragStart.current = { x: e.clientX, y: e.clientY };
+    panStart.current = { ...pan };
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  }, [pan]);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    setPan({
+      x: panStart.current.x + (e.clientX - dragStart.current.x),
+      y: panStart.current.y + (e.clientY - dragStart.current.y),
+    });
+  }, []);
+
+  const handlePointerUp = useCallback(() => { dragging.current = false; }, []);
+
+  const handleReset = () => { setPan({ x: 0, y: 0 }); setZoom(1); };
+
   const getColor = (mastery: number) => {
+    if (mastery === 0)
+      return { fill: "#6b7280", stroke: "#4b5563", text: "#fff" };
     if (mastery === 100)
       return { fill: "#10b981", stroke: "#059669", text: "#fff" };
     return { fill: "#3b82f6", stroke: "#2563eb", text: "#fff" };
   };
 
+  const prereqSet = new Set<string>();
+  displayNodes.forEach((node) => {
+    node.deps.forEach((depId) => prereqSet.add(`${depId}-${node.id}`));
+  });
+
   return (
     <div className="px-6 py-5">
-      <h2 className="text-lg font-bold">Knowledge Node Map</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Topic dependency graph. Click a node to view its wiki page.
-      </p>
-      <div className="mt-5 overflow-auto rounded-xl border bg-card">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold">Knowledge Node Map</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Topic dependency graph. Scroll to zoom, drag to pan. Click a node to view its wiki page.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[10px] text-muted-foreground">{Math.round(zoom * 100)}%</span>
+          <button onClick={handleReset} className="rounded-md border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+            Reset View
+          </button>
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        className="mt-5 overflow-hidden rounded-xl border bg-card"
+        style={{ height: Math.max(400, svgH), cursor: dragging.current ? "grabbing" : "grab" }}
+        onWheel={handleWheel}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+      >
         <svg
-          viewBox={`0 0 ${Math.max(850, ...displayNodes.map((n) => n.x + 180))} ${Math.max(380, ...displayNodes.map((n) => n.y + 80))}`}
-          className="w-full"
-          style={{ minHeight: Math.max(380, ...displayNodes.map((n) => n.y + 80)) }}
+          width="100%"
+          height="100%"
+          viewBox={`0 0 ${svgW} ${svgH}`}
+          style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "0 0" }}
         >
+          <defs>
+            <marker id="arrow-prereq" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#f59e0b" />
+            </marker>
+            <marker id="arrow-default" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#cbd5e1" />
+            </marker>
+          </defs>
           {displayNodes.flatMap((node) =>
             node.deps.map((depId) => {
               const dep = displayNodes.find((n) => n.id === depId);
               if (!dep) return null;
+              const edgeKey = `${depId}-${node.id}`;
+              const isPrereq = prereqSet.has(edgeKey);
               return (
                 <line
-                  key={`${depId}-${node.id}`}
+                  key={edgeKey}
                   x1={dep.x + 70}
                   y1={dep.y + 22}
                   x2={node.x}
                   y2={node.y + 22}
-                  stroke="#cbd5e1"
-                  strokeWidth="2"
-                  markerEnd="url(#arrowhead)"
+                  stroke={isPrereq ? "#f59e0b" : "#cbd5e1"}
+                  strokeWidth={isPrereq ? 2.5 : 2}
+                  strokeDasharray={isPrereq ? undefined : "6 3"}
+                  markerEnd={isPrereq ? "url(#arrow-prereq)" : "url(#arrow-default)"}
                 />
               );
             })
           )}
-          <defs>
-            <marker
-              id="arrowhead"
-              markerWidth="8"
-              markerHeight="6"
-              refX="8"
-              refY="3"
-              orient="auto"
-            >
-              <polygon points="0 0, 8 3, 0 6" fill="#cbd5e1" />
-            </marker>
-          </defs>
           {displayNodes.map((node) => {
             const colors = getColor(node.mastery);
             const isHovered = hovered === node.id;
             return (
               <g
                 key={node.id}
+                data-node="true"
                 onMouseEnter={() => setHovered(node.id)}
                 onMouseLeave={() => setHovered(null)}
                 onClick={() => onNodeClick(node.id)}
@@ -1593,6 +1688,18 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
         <span className="flex items-center gap-1.5">
           <Circle className="h-3 w-3 fill-blue-500 text-blue-500" />
           In Progress
+        </span>
+        <span className="flex items-center gap-1.5">
+          <Circle className="h-3 w-3 fill-gray-500 text-gray-500" />
+          Not Started
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 bg-amber-500" />
+          Prerequisite
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-slate-300" />
+          Related
         </span>
       </div>
     </div>

@@ -70,6 +70,7 @@ from app.api.routes.chat import router as chat_router
 from app.api.routes.dag import router as dag_router
 from app.api.routes.claims import router as claims_router
 from app.api.routes.audio import router as audio_router
+from app.api.routes.glossary import router as glossary_router
 
 app.include_router(auth_router)
 app.include_router(activities_router)
@@ -83,6 +84,7 @@ app.include_router(chat_router)
 app.include_router(dag_router)
 app.include_router(claims_router)
 app.include_router(audio_router)
+app.include_router(glossary_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
