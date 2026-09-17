@@ -196,6 +196,12 @@ class UserProfile(BaseModel):
     streak_days: int = 0
     last_active_date: date | None = None
     email: str | None = None
+    avatar: str | None = None
+
+
+class UserProfileUpdate(BaseModel):
+    email: str | None = None
+    avatar: str | None = None
 
 
 class MasteryEntry(BaseModel):
@@ -211,6 +217,9 @@ class HistoryEvent(BaseModel):
     claim_id: str
     claim_title: str
     is_correct: bool
+    outcome: str
+    student_response: str | None = None
+    feedback: str | None = None
     xp_awarded: int
     timestamp: datetime
 

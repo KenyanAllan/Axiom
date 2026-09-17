@@ -15,7 +15,7 @@ import re
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.tables import Activity, AtomicClaim, Topic, UserMastery
+from app.models.tables import Activity, AtomicClaim, Topic, TopicPrerequisite, UserMastery
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,13 @@ async def generate_basic_activities(
 
     # ── True / False ─────────────────────────────────────────────────────────
     if "true_false" in types:
+        show_true = random.random() < 0.5
+        if show_true:
+            statement = claim.content
+            correct_answer = True
+        else:
+            statement = _negate_claim(claim.content)
+            correct_answer = False
         activity = Activity(
             workspace_id=workspace_id,
             creator_id=creator_id,
@@ -94,25 +101,19 @@ async def generate_basic_activities(
             title=f"True/False: {claim.title}",
             difficulty=1,
             target_claim_ids=[claim.id],
-            payload={"statement": claim.content, "correct_answer": True},
+            payload={"statement": statement, "correct_answer": correct_answer},
         )
         db.add(activity)
         activities.append(activity)
 
-    # ── Multiple Choice (needs sibling claims in the same topic) ─────────────
+    # ── Multiple Choice (pull distractors from connected topics in the DAG) ──
     if "multi_choice" in types:
-        sibling_result = await db.execute(
-            select(AtomicClaim).where(
-                AtomicClaim.topic_id == claim.topic_id,
-                AtomicClaim.id != claim.id,
-            )
-        )
-        siblings = list(sibling_result.scalars().all())
-
-        if len(siblings) >= 3:
-            # Take up to 3 distractors
-            distractors = siblings[:3]
-            options = [claim.content] + [d.content for d in distractors]
+        distractors = await _find_distractors(db, claim, 3)
+        if len(distractors) >= 3:
+            chosen = random.sample(distractors, 3)
+            options = [claim.content] + [d.content for d in chosen]
+            random.shuffle(options)
+            correct_index = options.index(claim.content)
             activity = Activity(
                 workspace_id=workspace_id,
                 creator_id=creator_id,
@@ -124,7 +125,7 @@ async def generate_basic_activities(
                 payload={
                     "question": f"Which statement is correct about {claim.title}?",
                     "options": options,
-                    "correct_index": 0,
+                    "correct_index": correct_index,
                 },
             )
             db.add(activity)
@@ -193,6 +194,73 @@ async def generate_basic_activities(
         await db.refresh(a)
 
     return activities
+
+
+async def _find_distractors(
+    db: AsyncSession,
+    claim: AtomicClaim,
+    min_count: int,
+) -> list[AtomicClaim]:
+    """Find distractor claims for multi-choice questions.
+
+    Searches in widening rings: same topic → DAG-connected topics → workspace.
+    """
+    # 1. Same topic siblings
+    result = await db.execute(
+        select(AtomicClaim).where(
+            AtomicClaim.topic_id == claim.topic_id,
+            AtomicClaim.id != claim.id,
+        )
+    )
+    pool = list(result.scalars().all())
+    if len(pool) >= min_count:
+        return pool
+
+    # 2. DAG-connected topics (prerequisites + dependents)
+    seen_topic_ids = {claim.topic_id}
+    prereq_result = await db.execute(
+        select(TopicPrerequisite.prerequisite_id).where(
+            TopicPrerequisite.topic_id == claim.topic_id
+        )
+    )
+    dependent_result = await db.execute(
+        select(TopicPrerequisite.topic_id).where(
+            TopicPrerequisite.prerequisite_id == claim.topic_id
+        )
+    )
+    connected_ids = (
+        {r[0] for r in prereq_result.all()}
+        | {r[0] for r in dependent_result.all()}
+    ) - seen_topic_ids
+
+    if connected_ids:
+        seen_topic_ids |= connected_ids
+        result = await db.execute(
+            select(AtomicClaim).where(
+                AtomicClaim.topic_id.in_(connected_ids),
+                AtomicClaim.id != claim.id,
+            )
+        )
+        pool.extend(result.scalars().all())
+        if len(pool) >= min_count:
+            return pool
+
+    # 3. Remaining workspace topics
+    result = await db.execute(
+        select(AtomicClaim)
+        .join(Topic, AtomicClaim.topic_id == Topic.id)
+        .where(
+            Topic.workspace_id == (
+                select(Topic.workspace_id).where(Topic.id == claim.topic_id).scalar_subquery()
+            ),
+            AtomicClaim.id != claim.id,
+            AtomicClaim.topic_id.notin_(seen_topic_ids),
+        )
+        .order_by(func.random())
+        .limit(min_count * 2)
+    )
+    pool.extend(result.scalars().all())
+    return pool
 
 
 def _make_fill_blank(title: str, content: str) -> tuple[str | None, str]:
@@ -278,6 +346,39 @@ def _extract_key_points(content: str) -> list[str]:
     return [s for _, s in scored[:3]]
 
 
+AI_ACTIVITY_PROMPTS: dict[str, str] = {
+    "wrong_on_purpose": """\
+You are a misconception designer for a technical learning platform.
+
+Given an atomic claim, produce a SUBTLY FLAWED version that a student must
+diagnose. The flaw should be the kind of mistake a beginner would make —
+not an obvious contradiction.
+
+Return a JSON object with:
+- "flawed_statement": the deliberately wrong version (1-2 sentences)
+- "flaw_type": one of "negation", "overgeneralization", "off_by_one",
+  "confused_prerequisite", "wrong_direction"
+- "explanation": why it's wrong (for the rubric, not shown to students)
+- "prompt": the question shown to the student
+
+Return ONLY the JSON object. No markdown fences.
+""",
+    "scenario": """\
+You are a scenario designer for a technical learning platform.
+
+Given an atomic claim, create a realistic scenario where a student must
+APPLY the concept to solve a problem or make a decision.
+
+Return a JSON object with:
+- "scenario": the situation description (2-4 sentences)
+- "question": what the student must figure out
+- "key_reasoning": the expected line of reasoning (for grading, not shown)
+
+Return ONLY the JSON object. No markdown fences.
+""",
+}
+
+
 async def generate_ai_activity(
     db: AsyncSession,
     claim: AtomicClaim,
@@ -290,7 +391,7 @@ async def generate_ai_activity(
     Returns None if Bedrock fails.  Falls back to a deterministic WoP if
     Bedrock is unavailable.
     """
-    if activity_type not in ("wrong_on_purpose", "scenario"):
+    if activity_type not in AI_ACTIVITY_PROMPTS:
         activity_type = "wrong_on_purpose"
 
     # Try deterministic first for WoP — works without Bedrock
@@ -313,31 +414,44 @@ async def generate_ai_activity(
             return activity
 
     try:
-        from app.services.bedrock import grade_response
-
-        prompt = (
-            f"Generate a {activity_type.replace('_', ' ')} learning activity for this claim:\n"
-            f"Title: {claim.title}\n"
-            f"Content: {claim.content}\n\n"
-            f"Return JSON with keys: type, title, payload (with question and context fields)."
-        )
+        from app.services.bedrock import generate_activity
 
         result = await asyncio.to_thread(
-            grade_response,
+            generate_activity,
+            system_prompt=AI_ACTIVITY_PROMPTS[activity_type],
+            claim_title=claim.title,
             claim_content=claim.content,
-            rubric="Generate an activity, not grade a response.",
-            student_response=prompt,
         )
+
+        if not result:
+            return None
+
+        if activity_type == "wrong_on_purpose":
+            payload = {
+                "claim": result.get("flawed_statement", claim.content),
+                "flawed_snippet": None,
+                "prompt": result.get("prompt", f"This statement about {claim.title} contains a deliberate error. Find and explain what is wrong."),
+                "flaw_type": result.get("flaw_type"),
+                "explanation": result.get("explanation"),
+            }
+            title = f"Spot the Flaw: {claim.title}"
+        else:
+            payload = {
+                "scenario": result.get("scenario", ""),
+                "question": result.get("question", ""),
+                "key_reasoning": result.get("key_reasoning"),
+            }
+            title = f"Scenario: {claim.title}"
 
         activity = Activity(
             workspace_id=workspace_id,
             creator_id=creator_id,
             scope="STUDENT_PERSONAL",
             type=activity_type,
-            title=f"{activity_type.replace('_', ' ').title()}: {claim.title}",
+            title=title,
             difficulty=2,
             target_claim_ids=[claim.id],
-            payload={"question": result.get("feedback", claim.content), "context": claim.content},
+            payload=payload,
         )
         db.add(activity)
         await db.flush()
@@ -349,6 +463,111 @@ async def generate_ai_activity(
         return None
 
 
+# ── Audio overview generation ────────────────────────────────────────────────
+
+
+async def generate_audio_overview(
+    db: AsyncSession,
+    workspace_id: int,
+    creator_id: str,
+    topic_ids: list[str],
+    style: str = "conversational",
+    user_instruction: str | None = None,
+) -> Activity:
+    """Generate an AI-scripted audio overview and synthesize via Polly.
+
+    Fetches topics + claims, calls Bedrock for script generation, calls
+    Polly for TTS, and persists the result as a mini_podcast Activity.
+    """
+    from uuid import uuid4
+
+    from app.services.bedrock import generate_audio_script
+    from app.services.polly import synthesize_speech
+
+    # 1. Fetch topics + claims
+    result = await db.execute(
+        select(Topic)
+        .where(Topic.id.in_(topic_ids))
+        .order_by(Topic.title)
+    )
+    topics = list(result.scalars().all())
+    if not topics:
+        raise ValueError("No topics found for the given IDs")
+
+    # 2. Format prompt input (cap at 10 claims per topic)
+    parts: list[str] = []
+    all_claim_ids: list[str] = []
+    topic_titles: list[str] = []
+    for topic in topics:
+        topic_titles.append(topic.title)
+        section = f"## TOPIC: {topic.title}"
+        if topic.summary:
+            section += f"\n{topic.summary}"
+        claims = topic.claims[:10] if topic.claims else []
+        if claims:
+            section += "\n\nClaims:"
+            for c in claims:
+                section += f"\n- {c.title}: {c.content}"
+                all_claim_ids.append(c.id)
+        parts.append(section)
+
+    topics_text = "\n\n".join(parts)
+
+    # 3. Generate script via Bedrock
+    script_result = await asyncio.to_thread(
+        generate_audio_script,
+        style=style,
+        topics_text=topics_text,
+        user_instruction=user_instruction,
+    )
+    script = script_result.get("script", "")
+    question = script_result.get("question", "")
+
+    if not script:
+        raise ValueError("Bedrock returned an empty script")
+
+    # 4. Synthesize via Polly
+    output_key = f"audio/overview_{uuid4().hex}.mp3"
+    polly_result = await asyncio.to_thread(synthesize_speech, script, output_key)
+
+    # 5. Generate presigned URL
+    from app.api.routes.audio import _generate_polly_download_url
+    audio_url = await asyncio.to_thread(
+        _generate_polly_download_url, polly_result["s3_key"]
+    )
+
+    # 6. Compute difficulty
+    difficulty = await _compute_difficulty(db, creator_id, all_claim_ids)
+
+    # 7. Create Activity
+    title_text = ", ".join(topic_titles)
+    if len(title_text) > 150:
+        title_text = title_text[:147] + "..."
+
+    activity = Activity(
+        workspace_id=workspace_id,
+        creator_id=creator_id,
+        scope="STUDENT_PERSONAL",
+        type="mini_podcast",
+        title=f"Audio Overview: {title_text}",
+        difficulty=difficulty,
+        target_claim_ids=all_claim_ids,
+        payload={
+            "summary": script,
+            "question": question,
+            "audio_url": audio_url,
+            "s3_key": polly_result["s3_key"],
+            "duration_seconds": polly_result.get("duration_seconds"),
+            "style": style,
+            "topic_ids": topic_ids,
+        },
+    )
+    db.add(activity)
+    await db.flush()
+    await db.refresh(activity)
+    return activity
+
+
 # ── Claim selection helper ────────────────────────────────────────────────────
 
 
@@ -358,19 +577,78 @@ async def _pick_claims(
     count: int,
     topic_ids: list[str] | None = None,
 ) -> list[AtomicClaim]:
-    """Pick *count* claims, optionally filtered to specific topics.
+    """Pick *count* claims from the given topics, expanding via the DAG if needed.
 
-    Randomly samples across topics so decks/quizzes feel varied.
+    Priority: requested topics → DAG-connected topics → rest of workspace.
     """
-    stmt = select(AtomicClaim).join(Topic, AtomicClaim.topic_id == Topic.id)
-    if topic_ids:
-        stmt = stmt.where(Topic.id.in_(topic_ids))
-    else:
-        stmt = stmt.where(Topic.workspace_id == workspace_id)
+    if not topic_ids:
+        # No topics specified — grab all workspace topics
+        result = await db.execute(
+            select(Topic.id).where(Topic.workspace_id == workspace_id)
+        )
+        topic_ids = [r[0] for r in result.all()]
 
-    stmt = stmt.order_by(func.random()).limit(count)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    if not topic_ids:
+        return []
+
+    # 1. Claims from the requested topics
+    result = await db.execute(
+        select(AtomicClaim)
+        .where(AtomicClaim.topic_id.in_(topic_ids))
+        .order_by(func.random())
+        .limit(count)
+    )
+    claims = list(result.scalars().all())
+    if len(claims) >= count:
+        return claims
+
+    # 2. Expand into DAG-connected topics (prerequisites + dependents)
+    seen_ids = set(topic_ids)
+    prereq_result = await db.execute(
+        select(TopicPrerequisite.prerequisite_id).where(
+            TopicPrerequisite.topic_id.in_(topic_ids)
+        )
+    )
+    dep_result = await db.execute(
+        select(TopicPrerequisite.topic_id).where(
+            TopicPrerequisite.prerequisite_id.in_(topic_ids)
+        )
+    )
+    neighbor_ids = (
+        {r[0] for r in prereq_result.all()}
+        | {r[0] for r in dep_result.all()}
+    ) - seen_ids
+
+    if neighbor_ids:
+        seen_ids |= neighbor_ids
+        claim_ids_seen = {c.id for c in claims}
+        result = await db.execute(
+            select(AtomicClaim)
+            .where(
+                AtomicClaim.topic_id.in_(neighbor_ids),
+                AtomicClaim.id.notin_(claim_ids_seen),
+            )
+            .order_by(func.random())
+            .limit(count - len(claims))
+        )
+        claims.extend(result.scalars().all())
+        if len(claims) >= count:
+            return claims
+
+    # 3. Fall back to remaining workspace topics
+    claim_ids_seen = {c.id for c in claims}
+    result = await db.execute(
+        select(AtomicClaim)
+        .join(Topic, AtomicClaim.topic_id == Topic.id)
+        .where(
+            Topic.workspace_id == workspace_id,
+            AtomicClaim.id.notin_(claim_ids_seen),
+        )
+        .order_by(func.random())
+        .limit(count - len(claims))
+    )
+    claims.extend(result.scalars().all())
+    return claims
 
 
 # ── Flashcard Deck ────────────────────────────────────────────────────────────
@@ -472,13 +750,7 @@ async def _build_quiz_question(
     if qtype == "multi_choice":
         return await _build_mc_question(db, index, claim)
     elif qtype == "true_false":
-        return {
-            "index": index,
-            "type": "true_false",
-            "claim_id": claim.id,
-            "prompt": claim.content,
-            "correct_answer": True,
-        }
+        return _build_tf_question(index, claim)
     elif qtype == "fill_blank":
         blanked, answer = _make_fill_blank(claim.title, claim.content)
         if blanked:
@@ -489,14 +761,7 @@ async def _build_quiz_question(
                 "prompt": blanked,
                 "correct_answer": answer,
             }
-        # Fall back to true_false if blank couldn't be made
-        return {
-            "index": index,
-            "type": "true_false",
-            "claim_id": claim.id,
-            "prompt": claim.content,
-            "correct_answer": True,
-        }
+        return _build_tf_question(index, claim)
     else:  # short_answer
         return {
             "index": index,
@@ -506,21 +771,33 @@ async def _build_quiz_question(
         }
 
 
+def _build_tf_question(index: int, claim: AtomicClaim) -> dict:
+    """Build a true/false question with a 50/50 chance of negation."""
+    show_true = random.random() < 0.5
+    if show_true:
+        statement = claim.content
+        correct_answer = True
+    else:
+        statement = _negate_claim(claim.content)
+        correct_answer = False
+    return {
+        "index": index,
+        "type": "true_false",
+        "claim_id": claim.id,
+        "prompt": statement,
+        "correct_answer": correct_answer,
+    }
+
+
 async def _build_mc_question(
     db: AsyncSession, index: int, claim: AtomicClaim
 ) -> dict:
-    """Build a multiple-choice question, falling back to true_false if not enough siblings."""
-    sibling_result = await db.execute(
-        select(AtomicClaim).where(
-            AtomicClaim.topic_id == claim.topic_id,
-            AtomicClaim.id != claim.id,
-        )
-    )
-    siblings = list(sibling_result.scalars().all())
+    """Build a multiple-choice question using DAG-connected distractors."""
+    distractors = await _find_distractors(db, claim, 3)
 
-    if len(siblings) >= 3:
-        distractors = random.sample(siblings, 3)
-        options = [claim.content] + [d.content for d in distractors]
+    if len(distractors) >= 3:
+        chosen = random.sample(distractors, 3)
+        options = [claim.content] + [d.content for d in chosen]
         random.shuffle(options)
         correct_index = options.index(claim.content)
         return {
@@ -532,11 +809,4 @@ async def _build_mc_question(
             "correct_index": correct_index,
         }
 
-    # Not enough siblings for MC, fall back to true/false
-    return {
-        "index": index,
-        "type": "true_false",
-        "claim_id": claim.id,
-        "prompt": claim.content,
-        "correct_answer": True,
-    }
+    return _build_tf_question(index, claim)

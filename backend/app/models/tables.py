@@ -30,6 +30,7 @@ class User(Base):
     id = Column(String, primary_key=True)
     display_name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=True)
+    avatar = Column(String, nullable=True)
     hashed_password = Column(String, nullable=True)
     role = Column(String, nullable=False)  # student | teacher | individual_learner
     xp = Column(Integer, nullable=False, default=0)
@@ -348,6 +349,8 @@ class ActivityAttempt(Base):
         String, ForeignKey("atomic_claims.id", ondelete="CASCADE"), nullable=True
     )
     outcome = Column(String, nullable=False)  # understood | did_not_understand | neutral
+    student_response = Column(Text, nullable=True)
+    feedback = Column(Text, nullable=True)
     hints_used = Column(Boolean, nullable=False, default=False)
     difficulty = Column(Integer, nullable=False, default=1)
     xp_awarded = Column(Integer, nullable=False, default=0)

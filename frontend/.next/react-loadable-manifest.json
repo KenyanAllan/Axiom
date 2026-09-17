@@ -10,5 +10,15 @@
     "files": [
       "static/chunks/646.f342b7cffc01feb0.js"
     ]
+  },
+  "components\\sources\\SourceDocsManager.tsx -> @/components/sources/PdfViewer": {
+    "id": 3844,
+    "files": [
+      "static/css/86041a383df08b9d.css",
+      "static/chunks/64bcc6aa.a76bc8a2c5229f4d.js",
+      "static/chunks/9b0008ae.d2d3cddf8b54decd.js",
+      "static/chunks/778.b80722f6a96bbdb9.js",
+      "static/chunks/844.04d4ac9e6703cc00.js"
+    ]
   }
 }

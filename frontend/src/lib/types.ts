@@ -25,6 +25,9 @@ export interface UserProfile {
   xp: number;
   level: number;
   streak_days?: number;
+  email?: string;
+  avatar?: string;
+  password?: string;
 }
 
 export interface ClaimCard {
@@ -169,6 +172,9 @@ export interface HistoryEvent {
   claim_id: string;
   claim_title: string;
   is_correct: boolean;
+  outcome: string;
+  student_response: string | null;
+  feedback: string | null;
   xp_awarded: number;
   timestamp: string;
 }
@@ -195,6 +201,8 @@ export interface SourceDocument {
   uploaded_at: string;
   status: "uploaded" | "processing" | "ready" | "error";
   claim_count: number;
+  content_type: string;
+  transcript_s3_key: string | null;
 }
 
 /** Shape returned by the backend GET/POST /api/sources endpoints. */
@@ -260,6 +268,18 @@ export interface GlossarySearchResponse {
   total: number;
 }
 
+// ── Workspace types ──────────────────────────────────────────────────────────
+
+export interface WorkspaceResponse {
+  id: number;
+  user_id: string;
+  title: string;
+  description: string | null;
+  is_classroom_shared: boolean;
+  classroom_id: number | null;
+  created_at: string;
+}
+
 // ── View tab types ────────────────────────────────────────────────────────────
 
 export type ViewTab =
@@ -269,4 +289,5 @@ export type ViewTab =
   | "nodemap"
   | "sources"
   | "glossary"
-  | "dashboard";
+  | "dashboard"
+  | "settings";

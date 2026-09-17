@@ -289,6 +289,8 @@ async def get_student_progress(
                 "activity_id": a.activity_id,
                 "claim_id": a.claim_id,
                 "outcome": a.outcome,
+                "student_response": a.student_response,
+                "feedback": a.feedback,
                 "xp_awarded": a.xp_awarded,
                 "attempted_at": a.attempted_at.isoformat() if a.attempted_at else None,
             }

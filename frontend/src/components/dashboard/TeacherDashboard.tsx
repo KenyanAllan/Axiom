@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect } from "react";
 import {
   Users,
   TrendingUp,
@@ -284,13 +284,11 @@ export function TeacherDashboard({ userId }: TeacherDashboardProps) {
   const [topics, setTopics] = useState<TopicBreakdown[]>(TOPIC_BREAKDOWN);
   const [classroomTitle, setClassroomTitle] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const fetchedRef = useRef(false);
 
   // ── Fetch real data on mount ──────────────────────────────────────────────
 
   useEffect(() => {
-    if (!userId || fetchedRef.current) return;
-    fetchedRef.current = true;
+    if (!userId) return;
 
     let cancelled = false;
 

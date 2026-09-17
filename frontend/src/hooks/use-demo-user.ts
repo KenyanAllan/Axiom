@@ -95,6 +95,14 @@ export function useDemoUser() {
     setAllUsers(updated);
   }, [userId, allUsers]);
 
+  const updateProfile = useCallback((patch: Partial<UserProfile>) => {
+    if (!userId || !allUsers[userId]) return;
+    const updated = { ...allUsers };
+    updated[userId] = { ...updated[userId], ...patch };
+    setAllUsers(updated);
+    saveCustomUsers(updated);
+  }, [userId, allUsers]);
+
   return {
     user,
     userId,
@@ -105,5 +113,6 @@ export function useDemoUser() {
     logout,
     switchUser,
     updateXP,
+    updateProfile,
   };
 }

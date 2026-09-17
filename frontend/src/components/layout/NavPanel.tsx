@@ -8,7 +8,6 @@ import {
   BookA,
   BookText,
   FileText,
-  Settings,
   BarChart3,
   GitBranch,
   PanelLeftClose,
@@ -61,23 +60,8 @@ export function NavPanel({ activeTab, onTabChange, userRole, wikiPages, onWikiSe
         collapsed ? "w-[52px]" : "w-[220px]"
       }`}
     >
-      {/* Collapse toggle */}
-      <div className={`flex items-center border-b ${collapsed ? "justify-center px-0" : "justify-end px-3"} py-2`}>
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title={collapsed ? "Expand panel" : "Collapse panel"}
-        >
-          {collapsed ? (
-            <PanelLeftOpen className="h-4 w-4" />
-          ) : (
-            <PanelLeftClose className="h-4 w-4" />
-          )}
-        </button>
-      </div>
-
       {/* Nav links */}
-      <nav className={`flex-1 overflow-y-auto py-4 space-y-0.5 ${collapsed ? "px-1.5" : "px-3"}`}>
+      <nav className={`py-4 space-y-0.5 ${collapsed ? "px-1.5" : "px-3"}`}>
         {visibleItems.map((item, i) => {
           const isActive = item.key !== "new_chat" && item.key === activeTab;
           return (
@@ -104,7 +88,22 @@ export function NavPanel({ activeTab, onTabChange, userRole, wikiPages, onWikiSe
         })}
       </nav>
 
-      <Separator />
+      {/* Collapse toggle — at bottom of nav section */}
+      <div className={`flex items-center border-t ${collapsed ? "justify-center px-0" : "justify-end px-3"} py-1.5`}>
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title={collapsed ? "Expand panel" : "Collapse panel"}
+        >
+          {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+        </button>
+      </div>
+
+      {/* Spacer pushes conversations + wikis to bottom */}
+      <div className="flex-1" />
+
+      {/* Conversations + Active Wikis — pinned to bottom */}
+      <div className="overflow-y-auto">
 
       {/* Conversations */}
       {!collapsed && sessions && sessions.length > 0 ? (
@@ -196,18 +195,7 @@ export function NavPanel({ activeTab, onTabChange, userRole, wikiPages, onWikiSe
         </div>
       )}
 
-      <Separator />
-
-      {/* Settings */}
-      <button
-        className={`flex items-center text-sm text-muted-foreground transition-colors hover:text-foreground ${
-          collapsed ? "justify-center py-3" : "gap-2.5 px-5 py-3"
-        }`}
-        title={collapsed ? "Settings" : undefined}
-      >
-        <Settings className="h-4 w-4" />
-        {!collapsed && <span>Settings</span>}
-      </button>
+      </div>
     </aside>
   );
 }

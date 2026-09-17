@@ -27,7 +27,7 @@ import {
   Bot,
   MessageSquare,
 } from "lucide-react";
-import { evaluateResponse, submitAttempt } from "@/lib/api";
+import { evaluateResponse, submitAttempt, generateAudioOverview } from "@/lib/api";
 import type { WikiPage } from "@/components/layout/CenterStage";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -244,6 +244,7 @@ interface ActivityFeedProps {
   onActivitiesChange: (activities: Activity[]) => void;
   onExpandActivity: (id: string) => void;
   wikiPages: WikiPage[];
+  userId: string;
 }
 
 export function ActivityFeed({
@@ -251,12 +252,17 @@ export function ActivityFeed({
   onActivitiesChange,
   onExpandActivity,
   wikiPages,
+  userId,
 }: ActivityFeedProps) {
   const [showForm, setShowForm] = useState(false);
   const [fTitle, setFTitle] = useState("");
   const [fTopic, setFTopic] = useState("");
   const [fType, setFType] = useState<ActivityType>("flashcard");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [fStyle, setFStyle] = useState<"conversational" | "narrative" | "discussion">("conversational");
+  const [fUserInstruction, setFUserInstruction] = useState("");
+  const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const formInputCls =
     "w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring";
@@ -311,8 +317,68 @@ export function ActivityFeed({
     setShowSuggestions(false);
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!fTitle.trim() || !fTopic.trim()) return;
+
+    if (fType === "mini_podcast") {
+      const topicIds = selectedTopicIds.length > 0
+        ? selectedTopicIds
+        : wikiPages
+            .filter((p) => fTopic.toLowerCase().includes(p.title.toLowerCase()))
+            .map((p) => p.id);
+
+      if (topicIds.length === 0) {
+        const fallback: Activity = {
+          id: `activity_${++_activityCounter}`,
+          type: "mini_podcast",
+          title: fTitle.trim(),
+          topic: fTopic.trim(),
+          xp: XP_BY_TYPE.mini_podcast ?? 40,
+        };
+        onActivitiesChange([fallback, ...activities]);
+        resetForm();
+        return;
+      }
+
+      setIsGenerating(true);
+      try {
+        const result = await generateAudioOverview(userId, {
+          topic_ids: topicIds,
+          style: fStyle,
+          user_instruction: fUserInstruction.trim() || undefined,
+        });
+        const newActivity: Activity = {
+          id: String(result.activity_id),
+          type: "mini_podcast",
+          title: result.title,
+          topic: fTopic.trim(),
+          xp: XP_BY_TYPE.mini_podcast ?? 40,
+          payload: {
+            summary: result.script,
+            question: result.question,
+            audio_url: result.audio_url,
+            s3_key: result.s3_key,
+            style: result.style,
+          },
+        };
+        onActivitiesChange([newActivity, ...activities]);
+      } catch (err) {
+        console.error("Audio overview generation failed:", err);
+        const fallback: Activity = {
+          id: `activity_${++_activityCounter}`,
+          type: "mini_podcast",
+          title: fTitle.trim(),
+          topic: fTopic.trim(),
+          xp: XP_BY_TYPE.mini_podcast ?? 40,
+        };
+        onActivitiesChange([fallback, ...activities]);
+      } finally {
+        setIsGenerating(false);
+        resetForm();
+      }
+      return;
+    }
+
     const newActivity: Activity = {
       id: `activity_${++_activityCounter}`,
       type: fType,
@@ -321,9 +387,16 @@ export function ActivityFeed({
       xp: XP_BY_TYPE[fType] ?? DEFAULT_XP,
     };
     onActivitiesChange([newActivity, ...activities]);
+    resetForm();
+  };
+
+  const resetForm = () => {
     setFTitle("");
     setFTopic("");
     setFType("flashcard");
+    setFStyle("conversational");
+    setFUserInstruction("");
+    setSelectedTopicIds([]);
     setShowForm(false);
   };
 
@@ -444,19 +517,89 @@ export function ActivityFeed({
                 );
               })}
             </div>
+            {fType === "mini_podcast" && (
+              <div className="space-y-3 rounded-lg border bg-secondary/10 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Audio Overview Settings
+                </p>
+                {/* Topic selection */}
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-foreground/70">Select topics to include</p>
+                  <div className="max-h-40 space-y-1 overflow-y-auto">
+                    {wikiPages.map((page) => (
+                      <label key={page.id} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedTopicIds.includes(page.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedTopicIds((prev) => [...prev, page.id]);
+                            } else {
+                              setSelectedTopicIds((prev) => prev.filter((id) => id !== page.id));
+                            }
+                          }}
+                          className="rounded border-gray-300"
+                        />
+                        <span>{page.title}</span>
+                        <span className="ml-auto text-xs text-muted-foreground">{page.claims.length} claims</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                {/* Style selector */}
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-foreground/70">Narration style</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {([
+                      { key: "conversational" as const, label: "Conversational", desc: "Casual study-buddy tone" },
+                      { key: "narrative" as const, label: "Narrative", desc: "Documentary storytelling" },
+                      { key: "discussion" as const, label: "Discussion", desc: "Two people talking it through" },
+                    ]).map((s) => (
+                      <button
+                        key={s.key}
+                        onClick={() => setFStyle(s.key)}
+                        className={`flex flex-col items-start rounded-md border px-3 py-2 text-left transition-colors ${
+                          fStyle === s.key
+                            ? "border-teal-500 bg-teal-50 text-teal-700"
+                            : "text-muted-foreground hover:bg-accent"
+                        }`}
+                      >
+                        <span className="text-xs font-medium">{s.label}</span>
+                        <span className="text-[10px] opacity-70">{s.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Custom instructions */}
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-foreground/70">Custom instructions (optional)</p>
+                  <textarea
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    placeholder="e.g., focus on examples, keep it under 2 minutes, explain like I'm 5..."
+                    rows={2}
+                    maxLength={500}
+                    value={fUserInstruction}
+                    onChange={(e) => setFUserInstruction(e.target.value)}
+                  />
+                  <p className="mt-0.5 text-right text-[10px] text-muted-foreground">{fUserInstruction.length}/500</p>
+                </div>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <button
-                onClick={() => setShowForm(false)}
+                onClick={() => { resetForm(); }}
                 className="rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
+                disabled={isGenerating}
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreate}
-                disabled={!fTitle.trim() || !fTopic.trim()}
-                className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+                disabled={!fTitle.trim() || !fTopic.trim() || isGenerating}
+                className="flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
               >
-                Create
+                {isGenerating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {isGenerating ? "Generating..." : fType === "mini_podcast" ? "Generate Audio" : "Create"}
               </button>
             </div>
           </div>
@@ -1394,6 +1537,7 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const p = activity.payload ?? {};
   const draftRef = useRef(response);
   draftRef.current = response;
@@ -1401,8 +1545,27 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
   feedbackRef.current = feedback;
   useEffect(() => () => { if (draftRef.current.trim() && !feedbackRef.current) onSaveResult?.({ lastResponse: draftRef.current }); }, [onSaveResult]);
 
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = playbackRate;
+  }, [playbackRate]);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    };
+  }, []);
+
   const handleListen = () => {
-    if ("speechSynthesis" in window && p.summary) {
+    if (p.audio_url) {
+      if (!audioRef.current) {
+        audioRef.current = new Audio(p.audio_url);
+        audioRef.current.onended = () => setIsPlaying(false);
+        audioRef.current.onerror = () => setIsPlaying(false);
+      }
+      audioRef.current.playbackRate = playbackRate;
+      audioRef.current.play();
+      setIsPlaying(true);
+    } else if ("speechSynthesis" in window && p.summary) {
       const utter = new SpeechSynthesisUtterance(p.summary);
       utter.rate = playbackRate;
       utter.onend = () => setIsPlaying(false);
@@ -1413,6 +1576,7 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
   };
 
   const handleStop = () => {
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
     window.speechSynthesis.cancel();
     setIsPlaying(false);
   };

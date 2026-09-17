@@ -19,6 +19,7 @@ import type {
   SourceDocument,
   TopicSummary,
   UserProfile,
+  WorkspaceResponse,
 } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -29,6 +30,21 @@ function headers(userId: string): HeadersInit {
     "Content-Type": "application/json",
     "X-Demo-User": userId,
   };
+}
+
+// ── User profile ─────────────────────────────────────────────────────────────
+
+export async function updateUserProfile(
+  userId: string,
+  patch: { email?: string | null; avatar?: string | null }
+): Promise<UserProfile> {
+  const res = await fetch(`${BASE}/api/users/me`, {
+    method: "PATCH",
+    headers: headers(userId),
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`Profile update failed: ${res.status}`);
+  return res.json();
 }
 
 // ── Activity feed / evaluate ──────────────────────────────────────────────────
@@ -178,6 +194,8 @@ function mapApiSource(src: ApiSourceDocument): SourceDocument {
     uploaded_at: src.created_at,
     status: src.status as SourceDocument["status"],
     claim_count: src.claim_count ?? 0,
+    content_type: src.content_type ?? "application/octet-stream",
+    transcript_s3_key: src.transcript_s3_key ?? null,
   };
 }
 
@@ -222,6 +240,23 @@ export async function deleteSourceDoc(
     headers: headers(userId),
   });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+}
+
+export interface ViewUrlResponse {
+  url: string;
+  content_type: string;
+  filename: string;
+}
+
+export async function getSourceViewUrl(
+  userId: string,
+  docId: number | string
+): Promise<ViewUrlResponse> {
+  const res = await fetch(`${BASE}/api/sources/${docId}/view-url`, {
+    headers: headers(userId),
+  });
+  if (!res.ok) throw new Error(`Get view URL failed: ${res.status}`);
+  return res.json();
 }
 
 // ── Chat sessions ─────────────────────────────────────────────────────────────
@@ -377,6 +412,26 @@ export async function fetchStudentProgress(
   return res.json();
 }
 
+export interface LeaderboardEntry {
+  rank: number;
+  student_id: string;
+  display_name: string;
+  xp: number;
+  level: number;
+}
+
+export async function fetchClassroomLeaderboard(
+  userId: string,
+  classroomId: number
+): Promise<LeaderboardEntry[]> {
+  const res = await fetch(
+    `${BASE}/api/classrooms/${classroomId}/leaderboard`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`Leaderboard fetch failed: ${res.status}`);
+  return res.json();
+}
+
 // ── Glossary ─────────────────────────────────────────────────────────────────
 
 export async function fetchGlossaryTerms(
@@ -444,4 +499,64 @@ export async function deleteGlossaryTerm(
     headers: headers(userId),
   });
   if (!res.ok) throw new Error(`Delete glossary term failed: ${res.status}`);
+}
+
+// ── Audio overview ──────────────────────────────────────────────────────────
+
+export interface GenerateAudioOverviewRequest {
+  workspace_id?: number;
+  topic_ids: string[];
+  style: "conversational" | "narrative" | "discussion";
+  user_instruction?: string;
+}
+
+export interface AudioOverviewResponse {
+  activity_id: number;
+  title: string;
+  audio_url: string;
+  s3_key: string;
+  script: string;
+  question: string;
+  style: string;
+  duration_seconds: number | null;
+}
+
+export async function generateAudioOverview(
+  userId: string,
+  body: GenerateAudioOverviewRequest
+): Promise<AudioOverviewResponse> {
+  const res = await fetch(`${BASE}/api/audio/generate-overview`, {
+    method: "POST",
+    headers: headers(userId),
+    body: JSON.stringify({ workspace_id: body.workspace_id ?? DEMO_WORKSPACE_ID, ...body }),
+  });
+  if (!res.ok) throw new Error(`Audio overview generation failed: ${res.status}`);
+  return res.json();
+}
+
+// ── Workspaces ──────────────────────────────────────────────────────────────
+
+export async function listWorkspaces(
+  userId: string
+): Promise<WorkspaceResponse[]> {
+  const res = await fetch(`${BASE}/api/workspaces`, {
+    headers: headers(userId),
+  });
+  if (!res.ok) throw new Error(`List workspaces failed: ${res.status}`);
+  const data = await res.json();
+  return data.workspaces;
+}
+
+export async function createWorkspace(
+  userId: string,
+  title: string,
+  description?: string
+): Promise<WorkspaceResponse> {
+  const res = await fetch(`${BASE}/api/workspaces`, {
+    method: "POST",
+    headers: headers(userId),
+    body: JSON.stringify({ title, description: description || null }),
+  });
+  if (!res.ok) throw new Error(`Create workspace failed: ${res.status}`);
+  return res.json();
 }

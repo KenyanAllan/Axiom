@@ -274,6 +274,39 @@ async def list_sources(
     return results
 
 
+# ── GET /api/sources/{source_id}/view-url ───────────────────────────────────
+
+
+class ViewUrlResponse(BaseModel):
+    url: str
+    content_type: str
+    filename: str
+
+
+@router.get("/{source_id}/view-url", response_model=ViewUrlResponse)
+async def get_view_url(
+    source_id: int,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ViewUrlResponse:
+    """Generate a presigned S3 download URL for viewing a source document."""
+    result = await db.execute(
+        select(SourceDocument).where(SourceDocument.id == source_id)
+    )
+    doc = result.scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Source document not found")
+
+    await _verify_workspace_access(db, doc.workspace_id, user_id)
+
+    url = generate_download_url(doc.s3_key)
+    return ViewUrlResponse(
+        url=url,
+        content_type=doc.content_type or "application/octet-stream",
+        filename=doc.filename,
+    )
+
+
 # ── DELETE /api/sources/{source_id} ──────────────────────────────────────────
 
 

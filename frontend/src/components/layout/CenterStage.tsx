@@ -33,6 +33,7 @@ import { GlossaryTab } from "@/components/glossary/GlossaryTab";
 import { GlossaryInlineCard } from "@/components/glossary/GlossaryInlineCard";
 import type { UserRole, ViewTab, GraphTopic, GraphEdge } from "@/lib/types";
 import { createChatSession, sendChatMessage, fetchGraph } from "@/lib/api";
+import { SettingsPage } from "@/components/settings/SettingsPage";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -68,6 +69,10 @@ interface CenterStageProps {
   activeSessionId: string | null;
   onActiveSessionIdChange: (id: string | null) => void;
   onDeleteSession: (id: string) => void;
+  user: import("@/lib/types").UserProfile;
+  settings: import("@/hooks/use-settings").AppSettings;
+  onUpdateProfile: (patch: Partial<import("@/lib/types").UserProfile>) => void;
+  onUpdateSetting: <K extends keyof import("@/hooks/use-settings").AppSettings>(key: K, value: import("@/hooks/use-settings").AppSettings[K]) => void;
 }
 
 interface ChatContextItem {
@@ -421,6 +426,10 @@ export function CenterStage({
   activeSessionId,
   onActiveSessionIdChange,
   onDeleteSession,
+  user: userProfile,
+  settings,
+  onUpdateProfile,
+  onUpdateSetting,
 }: CenterStageProps) {
   const isTeacher = userRole === "teacher";
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
@@ -675,11 +684,11 @@ export function CenterStage({
   }, [isListening]);
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       <Tabs
         value={activeTab}
         onValueChange={(v) => onTabChange(v as ViewTab)}
-        className="flex flex-1 flex-col"
+        className="flex min-h-0 flex-1 flex-col"
       >
         {/* Tab triggers hidden — navigation handled by NavPanel */}
         <TabsList className="hidden">
@@ -690,6 +699,7 @@ export function CenterStage({
           <TabsTrigger value="sources" />
           <TabsTrigger value="glossary" />
           <TabsTrigger value="dashboard" />
+          <TabsTrigger value="settings" />
         </TabsList>
 
         {/* ── Tab content ──────────────────────────────────────────────── */}
@@ -700,6 +710,7 @@ export function CenterStage({
               onActivitiesChange={onActivitiesChange}
               onExpandActivity={onExpandActivity}
               wikiPages={wikiPages}
+              userId={userId}
             />
         </TabsContent>
 
@@ -764,6 +775,15 @@ export function CenterStage({
             <TeacherDashboard userId={userId} />
           </TabsContent>
         )}
+
+        <TabsContent value="settings" className="flex-1 overflow-y-auto">
+          <SettingsPage
+            user={userProfile}
+            settings={settings}
+            onUpdateProfile={onUpdateProfile}
+            onUpdateSetting={onUpdateSetting}
+          />
+        </TabsContent>
       </Tabs>
 
       {/* ── Shared bottom input bar ──────────────────────────────────── */}

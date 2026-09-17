@@ -122,6 +122,218 @@ def grade_response(
     }
 
 
+# ─── Activity generation via Converse API ─────────────────────────────────────────
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+def generate_activity(
+    system_prompt: str,
+    claim_title: str,
+    claim_content: str,
+) -> dict[str, Any]:
+    """Call Bedrock Converse API to generate a learning activity.
+
+    Returns the parsed JSON object from the model.
+    """
+    client = _get_client()
+
+    user_message = (
+        f"## CLAIM TITLE\n{claim_title}\n\n"
+        f"## CLAIM CONTENT\n{claim_content}"
+    )
+
+    response = client.converse(
+        modelId=settings.bedrock_model_id,
+        system=[{"text": system_prompt}],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": user_message}],
+            }
+        ],
+        inferenceConfig={
+            "maxTokens": 1024,
+            "temperature": 0.4,
+        },
+    )
+
+    raw_text = response["output"]["message"]["content"][0]["text"]
+    logger.debug("Bedrock raw activity generation response: %s", raw_text)
+
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        import re as _re
+        match = _re.search(r"\{.*\}", raw_text, _re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        logger.error("Failed to parse activity generation JSON: %s", raw_text)
+        return {}
+
+
+# ─── Audio script generation via Converse API ─────────────────────────────────────
+
+AUDIO_SCRIPT_CONVERSATIONAL = """\
+You are a friendly study-buddy narrator for the Axiom learning platform.
+
+You will receive a list of TOPICS, each with its ATOMIC CLAIMS — the factual
+assertions students need to understand. You may also receive an optional
+USER INSTRUCTION with extra guidance.
+
+Your task: write a conversational audio overview script that a text-to-speech
+engine will read aloud. Requirements:
+
+1. TONE: Casual, energetic, like explaining to a friend over coffee. Use
+   "we", "let's", contractions, and rhetorical questions.
+2. STRUCTURE: Open with a 1-2 sentence hook. Walk through the key concepts
+   from the claims, connecting them with transitions. Close with a brief recap.
+3. ANALOGIES & EXAMPLES: For each major concept, include at least one concrete
+   analogy or worked example that makes the idea tangible. Prefer everyday
+   analogies a non-expert would grasp.
+4. ACCURACY: Every factual statement must be grounded in the provided claims.
+   Do not invent facts beyond what the claims state.
+5. LENGTH: Aim for 400-800 words (roughly 3-5 minutes when read aloud at
+   normal speed). Respect any length constraints in the user instruction.
+6. SPEECH-FRIENDLY: Avoid parentheses, bullet points, markdown, URLs,
+   or special characters. Spell out abbreviations on first use. Use short
+   sentences and natural pauses (periods, not semicolons).
+
+Return a JSON object with exactly two keys:
+- "script": the full narration text (string)
+- "question": a single comprehension question the listener should be able to
+  answer after hearing the overview (string)
+
+Return ONLY the JSON object. No markdown fences, no preamble.
+"""
+
+AUDIO_SCRIPT_NARRATIVE = """\
+You are a storytelling narrator for the Axiom learning platform.
+
+You will receive a list of TOPICS, each with its ATOMIC CLAIMS — the factual
+assertions students need to understand. You may also receive an optional
+USER INSTRUCTION with extra guidance.
+
+Your task: write a narrative audio overview script that weaves the concepts
+into an engaging story or journey. A text-to-speech engine will read this
+aloud. Requirements:
+
+1. TONE: Thoughtful and immersive, like a documentary narrator or a chapter
+   from a popular science book. Use vivid analogies and a narrative arc.
+2. STRUCTURE: Begin with a compelling scene-setting or "imagine this" opening.
+   Introduce concepts as discoveries or steps in a journey. Build toward a
+   satisfying conclusion that ties ideas together.
+3. ANALOGIES & EXAMPLES: For each major concept, include at least one concrete
+   analogy or worked example woven naturally into the narrative. Make abstract
+   ideas feel real through vivid comparisons.
+4. ACCURACY: Every factual statement must be grounded in the provided claims.
+   Do not invent facts beyond what the claims state.
+5. LENGTH: Aim for 400-800 words (roughly 3-5 minutes when read aloud at
+   normal speed). Respect any length constraints in the user instruction.
+6. SPEECH-FRIENDLY: Avoid parentheses, bullet points, markdown, URLs,
+   or special characters. Spell out abbreviations on first use. Use short
+   sentences and natural pauses (periods, not semicolons).
+
+Return a JSON object with exactly two keys:
+- "script": the full narration text (string)
+- "question": a single comprehension question the listener should be able to
+  answer after hearing the overview (string)
+
+Return ONLY the JSON object. No markdown fences, no preamble.
+"""
+
+AUDIO_SCRIPT_DISCUSSION = """\
+You are a script writer for the Axiom learning platform.
+
+You will receive a list of TOPICS, each with its ATOMIC CLAIMS — the factual
+assertions students need to understand. You may also receive an optional
+USER INSTRUCTION with extra guidance.
+
+Your task: write a discussion-style audio script between two speakers — Alex
+and Sam — who explore the concepts together in a natural back-and-forth
+conversation. A text-to-speech engine will read this aloud. Requirements:
+
+1. TONE: Natural, curious, and enthusiastic. Alex tends to explain and teach.
+   Sam asks good questions, pushes back, and connects ideas to real life.
+   They build on each other's points.
+2. STRUCTURE: Sam opens with a question or observation that kicks off the
+   discussion. They work through the key concepts together, with Alex
+   introducing ideas and Sam probing deeper. End with a brief summary
+   exchange.
+3. FORMAT: Prefix each line with the speaker name followed by a colon.
+   Example: "Alex: So the key thing about eigenvalues is..."
+   "Sam: Wait, so you're saying the matrix just stretches the vector?"
+   Keep exchanges short — 1-3 sentences each. Alternate frequently.
+4. ANALOGIES & EXAMPLES: For each major concept, at least one speaker must
+   offer a concrete analogy or example. Sam often asks "so it's kind of
+   like..." and Alex confirms or refines.
+5. ACCURACY: Every factual statement must be grounded in the provided claims.
+   Do not invent facts beyond what the claims state.
+6. LENGTH: Aim for 400-800 words (roughly 3-5 minutes when read aloud at
+   normal speed). Respect any length constraints in the user instruction.
+7. SPEECH-FRIENDLY: Avoid parentheses, bullet points, markdown, URLs,
+   or special characters. Spell out abbreviations on first use.
+
+Return a JSON object with exactly two keys:
+- "script": the full discussion script (string, with "Alex:" and "Sam:" prefixes)
+- "question": a single comprehension question the listener should be able to
+  answer after hearing the discussion (string)
+
+Return ONLY the JSON object. No markdown fences, no preamble.
+"""
+
+AUDIO_SCRIPT_PROMPTS: dict[str, str] = {
+    "conversational": AUDIO_SCRIPT_CONVERSATIONAL,
+    "narrative": AUDIO_SCRIPT_NARRATIVE,
+    "discussion": AUDIO_SCRIPT_DISCUSSION,
+}
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+def generate_audio_script(
+    style: str,
+    topics_text: str,
+    user_instruction: str | None = None,
+) -> dict[str, Any]:
+    """Call Bedrock Converse API to generate an audio overview script.
+
+    Returns {"script": str, "question": str}.
+    """
+    client = _get_client()
+
+    system_prompt = AUDIO_SCRIPT_PROMPTS.get(style, AUDIO_SCRIPT_CONVERSATIONAL)
+
+    user_message = f"## TOPICS AND CLAIMS\n\n{topics_text}"
+    if user_instruction:
+        user_message += f"\n\n## USER INSTRUCTION\n{user_instruction}"
+
+    response = client.converse(
+        modelId=settings.bedrock_model_id,
+        system=[{"text": system_prompt}],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": user_message}],
+            }
+        ],
+        inferenceConfig={
+            "maxTokens": 4096,
+            "temperature": 0.7,
+        },
+    )
+
+    raw_text = response["output"]["message"]["content"][0]["text"]
+    logger.debug("Bedrock raw audio script response: %s", raw_text)
+
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        import re as _re
+        match = _re.search(r"\{.*\}", raw_text, _re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        logger.error("Failed to parse audio script JSON: %s", raw_text)
+        return {"script": raw_text, "question": ""}
+
+
 # ─── Embeddings via Titan Embeddings v2 ─────────────────────────────────────────
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))

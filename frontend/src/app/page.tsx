@@ -16,6 +16,7 @@ import { INITIAL_WIKI_PAGES } from "@/components/layout/CenterStage";
 import type { ChatSession } from "@/components/layout/CenterStage";
 import { SEED_SESSION } from "@/components/layout/CenterStage";
 import { useDemoUser } from "@/hooks/use-demo-user";
+import { useSettings } from "@/hooks/use-settings";
 import type { ViewTab } from "@/lib/types";
 import {
   fetchActivityFeed,
@@ -28,7 +29,8 @@ import { XP_BY_TYPE } from "@/components/activity/ActivityFeed";
 
 export default function Home() {
   const router = useRouter();
-  const { user, isLoggedIn, logout } = useDemoUser();
+  const { user, isLoggedIn, logout, updateProfile } = useDemoUser();
+  const { settings, update: updateSetting } = useSettings();
   const [activeTab, setActiveTab] = useState<ViewTab>("activity");
   const [mounted, setMounted] = useState(false);
   const [expandedActivityId, setExpandedActivityId] = useState<string | null>(
@@ -39,6 +41,7 @@ export default function Home() {
   const [wikiPages, setWikiPages] = useState<WikiPage[]>(INITIAL_WIKI_PAGES);
   const [wikiPageId, setWikiPageId] = useState<string | null>(null);
   const [pendingChatMessage, setPendingChatMessage] = useState<string | null>(null);
+  const [studentView, setStudentView] = useState(false);
 
   // ── Chat session state ────────────────────────────────────────────────────
   const [sessions, setSessions] = useState<ChatSession[]>([SEED_SESSION]);
@@ -46,7 +49,14 @@ export default function Home() {
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    if (user?.role === "teacher") {
+      setActiveTab("dashboard");
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${settings.fontScale * 100}%`;
+  }, [settings.fontScale]);
 
   useEffect(() => {
     if (mounted && !isLoggedIn) {
@@ -181,6 +191,12 @@ export default function Home() {
     });
   }, []);
 
+  const effectiveRole = studentView && user?.role === "teacher" ? "student" as const : user?.role ?? "student" as const;
+
+  const handleToggleStudentView = useCallback(() => {
+    setStudentView((prev) => !prev);
+  }, []);
+
   if (!mounted || !isLoggedIn || !user) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -196,11 +212,18 @@ export default function Home() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-        <LeftSidebar user={user} onLogout={handleLogout} />
+        <LeftSidebar
+          user={user}
+          onLogout={handleLogout}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          studentView={studentView}
+          onToggleStudentView={handleToggleStudentView}
+        />
         <NavPanel
           activeTab={activeTab}
           onTabChange={setActiveTab}
-          userRole={user.role}
+          userRole={effectiveRole}
           wikiPages={wikiPages}
           onWikiSelect={handleWikiSelect}
           sessions={sessions}
@@ -211,7 +234,7 @@ export default function Home() {
         <CenterStage
           activeTab={activeTab}
           onTabChange={setActiveTab}
-          userRole={user.role}
+          userRole={effectiveRole}
           userId={user.id}
           activities={activities}
           onActivitiesChange={setActivities}
@@ -227,10 +250,15 @@ export default function Home() {
           activeSessionId={activeSessionId}
           onActiveSessionIdChange={setActiveSessionId}
           onDeleteSession={handleDeleteSession}
+          user={user}
+          settings={settings}
+          onUpdateProfile={updateProfile}
+          onUpdateSetting={updateSetting}
         />
         <RightSidebar
           user={user}
           onActivityClick={handleExpandActivity}
+          userRole={effectiveRole}
         />
 
       {/* Fullscreen activity overlay */}

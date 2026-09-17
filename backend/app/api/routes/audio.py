@@ -6,6 +6,8 @@ import asyncio
 import logging
 from uuid import uuid4
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -98,6 +100,67 @@ async def speech_marks(
     marks = await asyncio.to_thread(generate_speech_marks, text)
 
     return SpeechMarksResponse(marks=marks, text_length=len(text))
+
+
+# ── POST /api/audio/generate-overview ─────────────────────────────────────
+
+
+class GenerateAudioOverviewRequest(BaseModel):
+    workspace_id: int = 1
+    topic_ids: list[str] = Field(..., min_length=1, description="One or more topic IDs to include")
+    style: Literal["conversational", "narrative", "discussion"] = "conversational"
+    user_instruction: str | None = Field(None, max_length=500, description="Optional custom instructions for the script")
+
+
+class AudioOverviewResponse(BaseModel):
+    activity_id: int
+    title: str
+    audio_url: str
+    s3_key: str
+    script: str
+    question: str
+    style: str
+    duration_seconds: float | None = None
+
+
+@router.post("/generate-overview", response_model=AudioOverviewResponse)
+async def generate_overview(
+    body: GenerateAudioOverviewRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AudioOverviewResponse:
+    """Generate an AI-scripted audio overview from selected topics.
+
+    Creates a Bedrock-generated script, synthesizes it via Polly,
+    and stores the result as a mini_podcast activity.
+    """
+    from app.services.activity_generator import generate_audio_overview
+
+    try:
+        activity = await generate_audio_overview(
+            db=db,
+            workspace_id=body.workspace_id,
+            creator_id=user_id,
+            topic_ids=body.topic_ids,
+            style=body.style,
+            user_instruction=body.user_instruction,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await db.commit()
+
+    payload = activity.payload or {}
+    return AudioOverviewResponse(
+        activity_id=activity.id,
+        title=activity.title,
+        audio_url=payload.get("audio_url", ""),
+        s3_key=payload.get("s3_key", ""),
+        script=payload.get("summary", ""),
+        question=payload.get("question", ""),
+        style=payload.get("style", body.style),
+        duration_seconds=payload.get("duration_seconds"),
+    )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
