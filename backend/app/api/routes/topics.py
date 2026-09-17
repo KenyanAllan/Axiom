@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,6 +87,29 @@ async def would_create_cycle(
                 stack.append(prereq_id)
 
     return False
+
+
+# ── GET /api/topics ─────────────────────────────────────────────────────────
+
+
+@router.get("/topics", response_model=list[TopicSummary])
+async def list_topics(
+    workspace_id: int = Query(1, description="Filter by workspace ID"),
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[TopicSummary]:
+    """List all topics in a workspace."""
+    stmt = (
+        select(Topic)
+        .where(Topic.workspace_id == workspace_id)
+        .order_by(Topic.title)
+    )
+    result = await db.execute(stmt)
+    topics = result.scalars().all()
+    return [
+        TopicSummary(id=t.id, slug=t.slug, title=t.title, summary=t.summary)
+        for t in topics
+    ]
 
 
 # ── GET /api/topics/{slug} ──────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import {
   Users,
   TrendingUp,
@@ -13,9 +13,21 @@ import {
   Clock,
   BarChart3,
   Target,
+  Loader2,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import {
+  fetchTeacherClassrooms,
+  fetchClassroomDetail,
+  fetchClassroomDiagnostic,
+  fetchStudentProgress,
+} from "@/lib/api";
+import type {
+  ClassroomDetail,
+  ClassroomDiagnosticResponse,
+  StudentProgressResponse,
+} from "@/lib/api";
 
 // ── Demo student data ─────────────────────────────────────────────────────────
 
@@ -145,12 +157,213 @@ function timeAgo(iso: string): string {
 
 type SortKey = "name" | "xp" | "mastery" | "lastActive" | "streak";
 
+/** Convert backend progress responses into the component's StudentRow shape. */
+function buildStudentRows(
+  detail: ClassroomDetail,
+  diagnostic: ClassroomDiagnosticResponse,
+  progressMap: Record<string, StudentProgressResponse>
+): StudentRow[] {
+  const totalClaims = diagnostic.claim_ids.length || 1; // avoid /0
+
+  return detail.students.map((s) => {
+    const progress = progressMap[s.id];
+    const masteryEntries = progress?.mastery ?? [];
+    const claimsMastered = masteryEntries.filter(
+      (m) => m.understanding_rating >= 4
+    ).length;
+
+    // Approximate topics: group mastered claims by topic-like grouping from diagnostic
+    // Since we don't have per-topic info directly, estimate from mastery counts
+    const topicsTotal = diagnostic.claim_ids.length > 0
+      ? Math.max(1, Math.ceil(diagnostic.claim_ids.length / 3))
+      : 8;
+    const topicsMastered = Math.min(
+      topicsTotal,
+      Math.floor((claimsMastered / Math.max(totalClaims, 1)) * topicsTotal)
+    );
+
+    const history = progress?.activity_history ?? [];
+    const latestAttempt = history[0]; // sorted desc from backend
+    const recentOutcome: "understood" | "did_not_understand" | "neutral" =
+      latestAttempt?.outcome === "understood"
+        ? "understood"
+        : latestAttempt?.outcome === "did_not_understand"
+          ? "did_not_understand"
+          : "neutral";
+
+    const lastActive = latestAttempt?.attempted_at ?? s.joined_at;
+
+    return {
+      id: s.id,
+      name: s.display_name,
+      xp: progress?.xp ?? s.xp,
+      level: progress?.level ?? s.level,
+      streak: progress?.streak_days ?? 0,
+      topicsMastered,
+      topicsTotal,
+      claimsMastered,
+      claimsTotal: totalClaims,
+      lastActive,
+      recentOutcome,
+    };
+  });
+}
+
+/** Build topic breakdown from diagnostic mastery matrix. */
+function buildTopicBreakdown(
+  diagnostic: ClassroomDiagnosticResponse
+): TopicBreakdown[] {
+  // Group claims — we don't have topic names in the diagnostic response,
+  // so we group claim_ids by prefix (e.g. "claim_ge_01" -> "ge").
+  // If claim_ids are not prefixed, show one aggregate row.
+  const claimsByGroup: Record<string, string[]> = {};
+  for (const cid of diagnostic.claim_ids) {
+    // Try to extract group from claim id pattern like "claim_XX_NN"
+    const parts = cid.split("_");
+    const group = parts.length >= 3 ? parts.slice(1, -1).join("_") : "all";
+    if (!claimsByGroup[group]) claimsByGroup[group] = [];
+    claimsByGroup[group].push(cid);
+  }
+
+  const studentCount = diagnostic.student_ids.length || 1;
+  const result: TopicBreakdown[] = [];
+
+  for (const [group, claimIds] of Object.entries(claimsByGroup)) {
+    let totalRating = 0;
+    let totalEntries = 0;
+
+    for (const sid of diagnostic.student_ids) {
+      const studentMastery = diagnostic.mastery_matrix[sid] ?? {};
+      for (const cid of claimIds) {
+        if (cid in studentMastery) {
+          totalRating += studentMastery[cid];
+          totalEntries++;
+        }
+      }
+    }
+
+    // understanding_rating is 1-5, normalize to 0-100%
+    const avgRating = totalEntries > 0 ? totalRating / totalEntries : 0;
+    const avgMastery = Math.round((avgRating / 5) * 100);
+
+    // Count how many students have at least one mastery entry for this group
+    let enrolled = 0;
+    for (const sid of diagnostic.student_ids) {
+      const studentMastery = diagnostic.mastery_matrix[sid] ?? {};
+      if (claimIds.some((cid) => cid in studentMastery)) {
+        enrolled++;
+      }
+    }
+
+    // Prettify group name
+    const name = group === "all"
+      ? "All Topics"
+      : group
+          .split("_")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+
+    result.push({ name, enrolled: enrolled || studentCount, avgMastery });
+  }
+
+  return result.sort((a, b) => b.avgMastery - a.avgMastery);
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function TeacherDashboard() {
+interface TeacherDashboardProps {
+  userId?: string;
+}
+
+export function TeacherDashboard({ userId }: TeacherDashboardProps) {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
+
+  const [students, setStudents] = useState<StudentRow[]>(DEMO_STUDENTS);
+  const [topics, setTopics] = useState<TopicBreakdown[]>(TOPIC_BREAKDOWN);
+  const [classroomTitle, setClassroomTitle] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fetchedRef = useRef(false);
+
+  // ── Fetch real data on mount ──────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!userId || fetchedRef.current) return;
+    fetchedRef.current = true;
+
+    let cancelled = false;
+
+    async function loadDashboard() {
+      setLoading(true);
+      try {
+        // 1. Find the teacher's first classroom
+        const classrooms = await fetchTeacherClassrooms(userId!);
+        if (cancelled || classrooms.length === 0) {
+          setLoading(false);
+          return; // keep demo data
+        }
+
+        const classroom = classrooms[0];
+        setClassroomTitle(classroom.title);
+
+        // 2. Fetch detail + diagnostic in parallel
+        const [detail, diagnostic] = await Promise.all([
+          fetchClassroomDetail(userId!, classroom.id),
+          fetchClassroomDiagnostic(userId!, classroom.id),
+        ]);
+
+        if (cancelled) return;
+
+        if (detail.students.length === 0) {
+          setLoading(false);
+          return; // keep demo data
+        }
+
+        // 3. Fetch individual student progress (in parallel, max 20)
+        const progressEntries = await Promise.all(
+          detail.students.slice(0, 20).map(async (s) => {
+            try {
+              const progress = await fetchStudentProgress(
+                userId!,
+                classroom.id,
+                s.id
+              );
+              return [s.id, progress] as const;
+            } catch {
+              return [s.id, null] as const;
+            }
+          })
+        );
+
+        if (cancelled) return;
+
+        const progressMap: Record<string, StudentProgressResponse> = {};
+        for (const [sid, prog] of progressEntries) {
+          if (prog) progressMap[sid] = prog;
+        }
+
+        // 4. Build display data
+        const rows = buildStudentRows(detail, diagnostic, progressMap);
+        if (rows.length > 0) setStudents(rows);
+
+        const topicRows = buildTopicBreakdown(diagnostic);
+        if (topicRows.length > 0) setTopics(topicRows);
+      } catch (err) {
+        console.warn("TeacherDashboard: API unavailable, using demo data", err);
+        // keep demo data on any error
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadDashboard();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  // ── Sort / aggregate ────────────────────────────────────────────────────────
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -161,7 +374,7 @@ export function TeacherDashboard() {
     }
   };
 
-  const sorted = [...DEMO_STUDENTS].sort((a, b) => {
+  const sorted = [...students].sort((a, b) => {
     let cmp = 0;
     switch (sortKey) {
       case "name":
@@ -184,13 +397,13 @@ export function TeacherDashboard() {
   });
 
   // Aggregate stats
-  const totalStudents = DEMO_STUDENTS.length;
-  const avgXP = Math.round(DEMO_STUDENTS.reduce((s, st) => s + st.xp, 0) / totalStudents);
-  const avgMastery = Math.round(
-    (DEMO_STUDENTS.reduce((s, st) => s + st.claimsMastered, 0) /
-      DEMO_STUDENTS.reduce((s, st) => s + st.claimsTotal, 0)) *
-      100
-  );
+  const totalStudents = students.length;
+  const avgXP = Math.round(students.reduce((s, st) => s + st.xp, 0) / (totalStudents || 1));
+  const totalClaimsMastered = students.reduce((s, st) => s + st.claimsMastered, 0);
+  const totalClaimsAll = students.reduce((s, st) => s + st.claimsTotal, 0);
+  const avgMastery = totalClaimsAll > 0
+    ? Math.round((totalClaimsMastered / totalClaimsAll) * 100)
+    : 0;
 
   const SortIcon = ({ col }: { col: SortKey }) => {
     if (sortKey !== col) return null;
@@ -201,13 +414,24 @@ export function TeacherDashboard() {
     );
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center px-6 py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">
+          Loading classroom data...
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 px-6 py-5">
       {/* Header */}
       <div>
         <h2 className="text-lg font-bold">Classroom Dashboard</h2>
         <p className="text-sm text-muted-foreground">
-          Applied Linear Algebra — Fall 2026
+          {classroomTitle ?? "Applied Linear Algebra"} — Fall 2026
         </p>
       </div>
 
@@ -358,7 +582,7 @@ export function TeacherDashboard() {
           <h3 className="text-sm font-semibold">Topic Breakdown</h3>
         </div>
         <div className="divide-y">
-          {TOPIC_BREAKDOWN.map((topic) => (
+          {topics.map((topic) => (
             <div
               key={topic.name}
               className="flex items-center gap-4 px-4 py-3"

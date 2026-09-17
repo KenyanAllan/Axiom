@@ -1,11 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Flame, Trophy, ArrowLeft, Medal, Crown } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import type { UserProfile } from "@/lib/types";
+import type { UserProfile, MasteryEntry, HistoryEvent } from "@/lib/types";
 import { formatXP } from "@/lib/utils";
+import {
+  fetchUserProfile,
+  fetchUserMastery,
+  fetchUserHistory,
+} from "@/lib/api";
 
 interface RightSidebarProps {
   user: UserProfile;
@@ -84,19 +89,125 @@ const CLASS_ACTIVITY = [
   },
 ];
 
+/** Convert an ISO timestamp to a human-friendly relative string. */
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return "Yesterday";
+  return `${days}d ago`;
+}
+
+/** Build domain-mastery percentages from per-claim mastery entries. */
+function buildDomainMastery(
+  entries: MasteryEntry[]
+): { domain: string; percent: number }[] {
+  const byTopic = new Map<string, { total: number; mastered: number }>();
+  for (const e of entries) {
+    const cur = byTopic.get(e.topic_title) ?? { total: 0, mastered: 0 };
+    cur.total += 1;
+    if (e.status === "mastered") cur.mastered += 1;
+    byTopic.set(e.topic_title, cur);
+  }
+  return Array.from(byTopic.entries())
+    .map(([domain, { total, mastered }]) => ({
+      domain,
+      percent: total > 0 ? Math.round((mastered / total) * 100) : 0,
+    }))
+    .sort((a, b) => b.percent - a.percent)
+    .slice(0, 6);
+}
+
+/** Convert backend history events to the timeline format used in the sidebar. */
+function historyToTimeline(
+  events: HistoryEvent[]
+): {
+  color: string;
+  title: string;
+  xp: number;
+  time: string;
+  activityId: string;
+}[] {
+  return events.slice(0, 5).map((e) => ({
+    color: e.is_correct ? "bg-emerald-500" : "bg-red-400",
+    title: e.is_correct
+      ? `Completed: ${e.claim_title}`
+      : `Attempted: ${e.claim_title}`,
+    xp: e.xp_awarded,
+    time: relativeTime(e.timestamp),
+    activityId: e.claim_id,
+  }));
+}
+
 export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
-  const xpForNextLevel = user.level * 200;
-  const xpInCurrentLevel = user.xp - (user.level - 1) * 200;
+  // ── Real data state (falls back to hardcoded) ──────────────────────────────
+  const [liveProfile, setLiveProfile] = useState<UserProfile | null>(null);
+  const [domainMastery, setDomainMastery] = useState<
+    { domain: string; percent: number }[] | null
+  >(null);
+  const [activityTimeline, setActivityTimeline] = useState<
+    {
+      color: string;
+      title: string;
+      xp: number;
+      time: string;
+      activityId: string;
+    }[] | null
+  >(null);
+
+  useEffect(() => {
+    if (!user.id) return;
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const [profile, mastery, history] = await Promise.all([
+          fetchUserProfile(user.id).catch(() => null),
+          fetchUserMastery(user.id).catch(() => null),
+          fetchUserHistory(user.id).catch(() => null),
+        ]);
+        if (cancelled) return;
+        if (profile) setLiveProfile(profile);
+        if (mastery && mastery.length > 0) {
+          setDomainMastery(buildDomainMastery(mastery));
+        }
+        if (history && history.length > 0) {
+          setActivityTimeline(historyToTimeline(history));
+        }
+      } catch {
+        // Silently keep fallback data
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, [user.id]);
+
+  // Prefer live profile, fall back to prop
+  const displayUser = liveProfile ?? user;
+
+  const xpForNextLevel = displayUser.level * 200;
+  const xpInCurrentLevel = displayUser.xp - (displayUser.level - 1) * 200;
   const progressPercent = Math.min(
     Math.round((xpInCurrentLevel / 200) * 100),
     100
   );
-  const xpRemaining = xpForNextLevel - user.xp;
+  const xpRemaining = xpForNextLevel - displayUser.xp;
 
-  const isTeacher = user.role === "teacher";
-  const recentActivity = isTeacher ? CLASS_ACTIVITY : STUDENT_ACTIVITY;
+  const isTeacher = displayUser.role === "teacher";
+
+  // Domain mastery: use live data or hardcoded fallback
+  const displayMastery = domainMastery ?? DOMAIN_MASTERY;
+
+  // Activity timeline: use live data or hardcoded fallback
+  const recentActivity =
+    activityTimeline ?? (isTeacher ? CLASS_ACTIVITY : STUDENT_ACTIVITY);
 
   if (showLeaderboard) {
     return (
@@ -161,7 +272,7 @@ export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
       <div className="px-5 py-5">
         <div className="flex items-start justify-between">
           <p className="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-            Level {user.level} Explorer
+            Level {displayUser.level} Explorer
           </p>
           <button
             onClick={() => setShowLeaderboard(true)}
@@ -174,13 +285,13 @@ export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
 
         <p className="mt-2">
           <span className="text-3xl font-bold tabular-nums tracking-tight">
-            {formatXP(user.xp)}
+            {formatXP(displayUser.xp)}
           </span>
           <span className="ml-1 text-sm text-muted-foreground">XP</span>
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {xpRemaining > 0
-            ? `${xpRemaining} XP remaining to Level ${user.level + 1}`
+            ? `${xpRemaining} XP remaining to Level ${displayUser.level + 1}`
             : "Max level reached"}
         </p>
 
@@ -192,7 +303,7 @@ export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
 
         <div className="mt-3 flex items-center gap-2 text-xs">
           <Flame className="h-3.5 w-3.5 text-orange-400" />
-          <span className="font-medium">6-day streak</span>
+          <span className="font-medium">{displayUser.streak_days ?? 0}-day streak</span>
           <span className="ml-auto font-mono text-muted-foreground">
             Top 4%
           </span>
@@ -207,7 +318,7 @@ export function RightSidebar({ user, onActivityClick }: RightSidebarProps) {
           Domain Mastery
         </p>
         <div className="space-y-2.5">
-          {DOMAIN_MASTERY.map((d) => (
+          {displayMastery.map((d) => (
             <div key={d.domain} className="flex items-center justify-between">
               <span className="text-sm">{d.domain}</span>
               <div className="flex items-center gap-2">

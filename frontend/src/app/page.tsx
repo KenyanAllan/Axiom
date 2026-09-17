@@ -13,8 +13,18 @@ import {
 import type { Activity } from "@/components/activity/ActivityFeed";
 import type { WikiPage } from "@/components/layout/CenterStage";
 import { INITIAL_WIKI_PAGES } from "@/components/layout/CenterStage";
+import type { ChatSession } from "@/components/layout/CenterStage";
+import { SEED_SESSION } from "@/components/layout/CenterStage";
 import { useDemoUser } from "@/hooks/use-demo-user";
 import type { ViewTab } from "@/lib/types";
+import {
+  fetchActivityFeed,
+  fetchTopics,
+  fetchClaims,
+  listChatSessions,
+  getChatSession,
+} from "@/lib/api";
+import { XP_BY_TYPE } from "@/components/activity/ActivityFeed";
 
 export default function Home() {
   const router = useRouter();
@@ -30,6 +40,10 @@ export default function Home() {
   const [wikiPageId, setWikiPageId] = useState<string | null>(null);
   const [pendingChatMessage, setPendingChatMessage] = useState<string | null>(null);
 
+  // ── Chat session state ────────────────────────────────────────────────────
+  const [sessions, setSessions] = useState<ChatSession[]>([SEED_SESSION]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>("seed");
+
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -39,6 +53,100 @@ export default function Home() {
       router.push("/login");
     }
   }, [mounted, isLoggedIn, router]);
+
+  // ── Load chat sessions from API ─────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+    listChatSessions(user.id)
+      .then(async (apiSessions) => {
+        if (apiSessions.length === 0) return;
+        const loaded: ChatSession[] = await Promise.all(
+          apiSessions.slice(0, 10).map(async (s) => {
+            try {
+              const detail = await getChatSession(user.id, s.id);
+              return {
+                id: `backend_${s.id}`,
+                backendId: s.id,
+                title: s.title,
+                messages: detail.messages.map((m, i) => ({
+                  id: `bm_${s.id}_${i}`,
+                  role: m.role as "user" | "assistant",
+                  text: m.content,
+                  time: new Date(m.created_at).toLocaleTimeString([], {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  }),
+                })),
+              };
+            } catch {
+              return {
+                id: `backend_${s.id}`,
+                backendId: s.id,
+                title: s.title,
+                messages: [],
+              };
+            }
+          })
+        );
+        if (loaded.length > 0) {
+          setSessions((prev) => [...prev, ...loaded]);
+        }
+      })
+      .catch(() => {});
+  }, [user?.id]);
+
+  // ── Load activity feed from API ─────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+    fetchActivityFeed(user.id)
+      .then((data) => {
+        if (data.cards.length > 0) {
+          const mapped: Activity[] = data.cards.map((card) => {
+            const actType = card.diagnostic_type === "feynman"
+              ? "feynman" as const
+              : card.diagnostic_type === "wrong_on_purpose"
+                ? "wrong_on_purpose" as const
+                : "flashcard" as const;
+            return {
+              id: card.claim_id,
+              type: actType,
+              title: card.claim_title,
+              topic: card.topic_title,
+              xp: XP_BY_TYPE[actType] ?? 25,
+            };
+          });
+          setActivities(mapped);
+        }
+      })
+      .catch(() => {});
+  }, [user?.id]);
+
+  // ── Load topics + claims for wiki ───────────────────────────────────────
+  useEffect(() => {
+    if (!user?.id) return;
+    Promise.all([fetchTopics(user.id), fetchClaims(user.id)])
+      .then(([topics, claims]) => {
+        if (topics.length === 0) return;
+        const pages: WikiPage[] = topics.map((t) => {
+          const topicClaims = claims.filter((c) => c.topic_id === t.id);
+          return {
+            id: t.id,
+            title: t.title,
+            aliases: [t.slug],
+            snippet: t.summary ?? "",
+            updated: "Sep 16",
+            claims: topicClaims.map((c) => ({
+              id: c.id,
+              title: c.title,
+              description: c.content,
+              anchors: c.rubric ? [c.rubric] : [],
+            })),
+          };
+        });
+        setWikiPages(pages);
+      })
+      .catch(() => {});
+  }, [user?.id]);
 
   const handleLogout = () => {
     logout();
@@ -63,6 +171,13 @@ export default function Home() {
     setActiveTab("wiki");
   }, []);
 
+  const handleDeleteSession = useCallback((id: string) => {
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+    setActiveSessionId((prevId) =>
+      prevId === id ? (sessions.length > 1 ? sessions[0].id : null) : prevId
+    );
+  }, [sessions]);
+
   if (!mounted || !isLoggedIn || !user) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -85,11 +200,16 @@ export default function Home() {
           userRole={user.role}
           wikiPages={wikiPages}
           onWikiSelect={handleWikiSelect}
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          onSessionSelect={setActiveSessionId}
+          onDeleteSession={handleDeleteSession}
         />
         <CenterStage
           activeTab={activeTab}
           onTabChange={setActiveTab}
           userRole={user.role}
+          userId={user.id}
           activities={activities}
           onActivitiesChange={setActivities}
           onExpandActivity={handleExpandActivity}
@@ -99,6 +219,11 @@ export default function Home() {
           onWikiPageSelect={setWikiPageId}
           pendingChatMessage={pendingChatMessage}
           onPendingChatMessageHandled={() => setPendingChatMessage(null)}
+          sessions={sessions}
+          onSessionsChange={setSessions}
+          activeSessionId={activeSessionId}
+          onActiveSessionIdChange={setActiveSessionId}
+          onDeleteSession={handleDeleteSession}
         />
         <RightSidebar
           user={user}

@@ -22,20 +22,36 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import type { Activity } from "@/components/activity/ActivityFeed";
 import { SourceDocsManager } from "@/components/sources/SourceDocsManager";
 import { TeacherDashboard } from "@/components/dashboard/TeacherDashboard";
-import type { UserRole, ViewTab } from "@/lib/types";
+import type { UserRole, ViewTab, GraphTopic, GraphEdge } from "@/lib/types";
+import { createChatSession, sendChatMessage, fetchGraph } from "@/lib/api";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface ChatSession {
+  id: string;
+  backendId?: number;
+  title: string;
+  messages: ChatMessage[];
+}
+
+export const SEED_SESSION: ChatSession = {
+  id: "seed",
+  title: "Gaussian Elimination",
+  messages: [],
+};
 
 interface CenterStageProps {
   activeTab: ViewTab;
   onTabChange: (tab: ViewTab) => void;
   userRole: UserRole;
+  userId: string;
   activities: Activity[];
   onActivitiesChange: (activities: Activity[]) => void;
   onExpandActivity: (id: string) => void;
@@ -45,6 +61,11 @@ interface CenterStageProps {
   onWikiPageSelect: (id: string | null) => void;
   pendingChatMessage?: string | null;
   onPendingChatMessageHandled?: () => void;
+  sessions: ChatSession[];
+  onSessionsChange: (sessions: ChatSession[] | ((prev: ChatSession[]) => ChatSession[])) => void;
+  activeSessionId: string | null;
+  onActiveSessionIdChange: (id: string | null) => void;
+  onDeleteSession: (id: string) => void;
 }
 
 interface ChatContextItem {
@@ -312,6 +333,32 @@ const DEMO_NODES: DemoNode[] = [
   { id: "orth", label: "Orthogonality", x: 400, y: 300, mastery: 30, deps: ["vs", "det"] },
 ];
 
+function computeNodeLayout(topics: GraphTopic[], edges: GraphEdge[]): DemoNode[] {
+  const depMap = new Map<string, string[]>();
+  for (const e of edges) {
+    const existing = depMap.get(e.to_id) ?? [];
+    existing.push(e.from_id);
+    depMap.set(e.to_id, existing);
+  }
+  const cols = 3;
+  return topics.map((t, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const mastery =
+      t.claim_count > 0
+        ? Math.round((t.mastered_count / t.claim_count) * 100)
+        : 0;
+    return {
+      id: t.topic_id,
+      label: (t.title ?? t.slug ?? t.topic_id).slice(0, 18),
+      x: 150 + col * 250,
+      y: 60 + row * 120,
+      mastery,
+      deps: depMap.get(t.topic_id) ?? [],
+    };
+  });
+}
+
 // ── Chat seed data ────────────────────────────────────────────────────────────
 
 const SEED_MESSAGES: ChatMessage[] = [
@@ -356,6 +403,7 @@ export function CenterStage({
   activeTab,
   onTabChange,
   userRole,
+  userId,
   activities,
   onActivitiesChange,
   onExpandActivity,
@@ -365,12 +413,19 @@ export function CenterStage({
   onWikiPageSelect,
   pendingChatMessage,
   onPendingChatMessageHandled,
+  sessions,
+  onSessionsChange,
+  activeSessionId,
+  onActiveSessionIdChange,
+  onDeleteSession,
 }: CenterStageProps) {
   const isTeacher = userRole === "teacher";
   const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES);
   const [input, setInput] = useState("");
   const [isListening, setIsListening] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
   const [chatContext, setChatContext] = useState<ChatContextItem[]>([]);
+  const [graphNodes, setGraphNodes] = useState<DemoNode[]>(DEMO_NODES);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recRef = useRef<any>(null);
 
@@ -379,6 +434,18 @@ export function CenterStage({
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, activeTab]);
+
+  // ── Load graph data from API ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    fetchGraph(userId)
+      .then((data) => {
+        if (data.topics.length > 0) {
+          setGraphNodes(computeNodeLayout(data.topics, data.edges));
+        }
+      })
+      .catch(() => {});
+  }, [userId]);
 
   const addClaimContext = useCallback((claim: WikiClaim, pageTitle: string) => {
     setChatContext((prev) => {
@@ -405,13 +472,111 @@ export function CenterStage({
     [onTabChange, wikiPages, onWikiPageSelect]
   );
 
+  const createNewSession = useCallback(
+    async (title?: string) => {
+      const localId = `chat_${++_msgId}`;
+      const newSession: ChatSession = {
+        id: localId,
+        title: title ?? "New Chat",
+        messages: [],
+      };
+      onSessionsChange([...sessions, newSession]);
+      onActiveSessionIdChange(localId);
+      setMessages([]);
+
+      try {
+        const backendSession = await createChatSession(userId, title);
+        const updated = { ...newSession, backendId: backendSession.id };
+        onSessionsChange(
+          sessions.map((s) => (s.id === localId ? updated : s)).concat(
+            sessions.find((s) => s.id === localId) ? [] : [updated]
+          )
+        );
+        onSessionsChange([
+          ...sessions.filter((s) => s.id !== localId),
+          updated,
+        ]);
+      } catch {
+        // keep local-only session
+      }
+    },
+    [sessions, onSessionsChange, onActiveSessionIdChange, userId]
+  );
+
   const sendMessage = useCallback(
-    (text: string) => {
+    async (text: string, forceNewSession = false) => {
       if (!text.trim()) return;
 
-      if (activeTab !== "chat") {
+      let targetSessionId = activeSessionId;
+
+      if (forceNewSession || activeTab !== "chat") {
+        const localId = `chat_${++_msgId}`;
+        const newSession: ChatSession = {
+          id: localId,
+          title: text.trim().slice(0, 40),
+          messages: [],
+        };
+        onSessionsChange([...sessions, newSession]);
+        onActiveSessionIdChange(localId);
+        targetSessionId = localId;
         setMessages([]);
         onTabChange("chat");
+
+        try {
+          const backendSession = await createChatSession(
+            userId,
+            text.trim().slice(0, 40)
+          );
+          onSessionsChange((prev: ChatSession[]) =>
+            prev.map((s) =>
+              s.id === localId ? { ...s, backendId: backendSession.id } : s
+            )
+          );
+          // Use backend session for sending message
+          const userMsg: ChatMessage = {
+            id: `m${++_msgId}`,
+            role: "user",
+            text: text.trim(),
+            time: ts(),
+            context: chatContext.length > 0 ? [...chatContext] : undefined,
+          };
+          setMessages((prev) => [...prev, userMsg]);
+          setInput("");
+          setChatContext([]);
+          setIsTyping(true);
+
+          try {
+            const reply = await sendChatMessage(
+              userId,
+              backendSession.id,
+              text.trim()
+            );
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `m${++_msgId}`,
+                role: "assistant",
+                text: reply.content,
+                time: ts(),
+              },
+            ]);
+          } catch {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `m${++_msgId}`,
+                role: "assistant",
+                text: "I'm processing your question. The backend may be starting up — please try again in a moment.",
+                time: ts(),
+              },
+            ]);
+          } finally {
+            setIsTyping(false);
+          }
+          return;
+        } catch {
+          // fall through to local-only handling
+        }
       }
 
       const userMsg: ChatMessage = {
@@ -424,6 +589,30 @@ export function CenterStage({
       setMessages((prev) => [...prev, userMsg]);
       setInput("");
       setChatContext([]);
+      setIsTyping(true);
+
+      // Find the backend session ID
+      const currentSession = sessions.find((s) => s.id === targetSessionId);
+      const backendId = currentSession?.backendId;
+
+      if (backendId) {
+        try {
+          const reply = await sendChatMessage(userId, backendId, text.trim());
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `m${++_msgId}`,
+              role: "assistant",
+              text: reply.content,
+              time: ts(),
+            },
+          ]);
+          setIsTyping(false);
+          return;
+        } catch {
+          // fall through to fake response
+        }
+      }
 
       setTimeout(() => {
         setMessages((prev) => [
@@ -435,14 +624,15 @@ export function CenterStage({
             time: ts(),
           },
         ]);
+        setIsTyping(false);
       }, 1500);
     },
-    [activeTab, onTabChange, chatContext]
+    [activeTab, onTabChange, chatContext, activeSessionId, sessions, onSessionsChange, onActiveSessionIdChange, userId]
   );
 
   useEffect(() => {
     if (pendingChatMessage) {
-      sendMessage(pendingChatMessage);
+      sendMessage(pendingChatMessage, true);
       onPendingChatMessageHandled?.();
     }
   }, [pendingChatMessage, sendMessage, onPendingChatMessageHandled]);
@@ -529,6 +719,18 @@ export function CenterStage({
                   <ChatBubble key={msg.id} message={msg} />
                 ))
               )}
+              {isTyping && (
+                <div className="flex gap-3">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                    <Bot className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="flex items-center gap-1 rounded-lg border bg-card px-4 py-3">
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40" style={{ animationDelay: "0ms" }} />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40" style={{ animationDelay: "150ms" }} />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/40" style={{ animationDelay: "300ms" }} />
+                  </div>
+                </div>
+              )}
               <div ref={bottomRef} />
             </div>
           </div>
@@ -546,16 +748,16 @@ export function CenterStage({
         </TabsContent>
 
         <TabsContent value="nodemap" className="flex-1 overflow-y-auto">
-          <DemoNodeMapTab onNodeClick={handleNodeClick} />
+          <DemoNodeMapTab nodes={graphNodes} onNodeClick={handleNodeClick} />
         </TabsContent>
 
         <TabsContent value="sources" className="flex-1 overflow-y-auto">
-          <SourceDocsManager userRole={userRole} />
+          <SourceDocsManager userId={userId} userRole={userRole} />
         </TabsContent>
 
         {isTeacher && (
           <TabsContent value="dashboard" className="flex-1 overflow-y-auto">
-            <TeacherDashboard />
+            <TeacherDashboard userId={userId} />
           </TabsContent>
         )}
       </Tabs>
@@ -616,7 +818,7 @@ export function CenterStage({
           </button>
           <button
             onClick={() => sendMessage(input)}
-            disabled={!input.trim() && chatContext.length === 0}
+            disabled={isTyping || (!input.trim() && chatContext.length === 0)}
             className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
           >
             <ArrowUp className="h-3.5 w-3.5" />
@@ -1272,10 +1474,12 @@ function DemoWikiTab({
 // ── Demo Node Map Tab ─────────────────────────────────────────────────────────
 
 interface DemoNodeMapTabProps {
+  nodes?: DemoNode[];
   onNodeClick: (nodeId: string) => void;
 }
 
-function DemoNodeMapTab({ onNodeClick }: DemoNodeMapTabProps) {
+function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
+  const displayNodes = nodes ?? DEMO_NODES;
   const [hovered, setHovered] = useState<string | null>(null);
 
   const getColor = (mastery: number) => {
@@ -1292,13 +1496,13 @@ function DemoNodeMapTab({ onNodeClick }: DemoNodeMapTabProps) {
       </p>
       <div className="mt-5 overflow-auto rounded-xl border bg-card">
         <svg
-          viewBox="0 0 850 380"
+          viewBox={`0 0 ${Math.max(850, ...displayNodes.map((n) => n.x + 180))} ${Math.max(380, ...displayNodes.map((n) => n.y + 80))}`}
           className="w-full"
-          style={{ minHeight: 380 }}
+          style={{ minHeight: Math.max(380, ...displayNodes.map((n) => n.y + 80)) }}
         >
-          {DEMO_NODES.flatMap((node) =>
+          {displayNodes.flatMap((node) =>
             node.deps.map((depId) => {
-              const dep = DEMO_NODES.find((n) => n.id === depId);
+              const dep = displayNodes.find((n) => n.id === depId);
               if (!dep) return null;
               return (
                 <line
@@ -1326,7 +1530,7 @@ function DemoNodeMapTab({ onNodeClick }: DemoNodeMapTabProps) {
               <polygon points="0 0, 8 3, 0 6" fill="#cbd5e1" />
             </marker>
           </defs>
-          {DEMO_NODES.map((node) => {
+          {displayNodes.map((node) => {
             const colors = getColor(node.mastery);
             const isHovered = hovered === node.id;
             return (

@@ -5,14 +5,16 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models.tables import SourceDocument, User, Workspace
+from app.models.tables import AtomicClaim, SourceDocument, User, Workspace
 from app.services.s3 import generate_upload_url, generate_download_url, delete_object
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,7 @@ class SourceResponse(BaseModel):
     size_bytes: int | None
     status: str
     transcript_s3_key: str | None
+    claim_count: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -72,6 +75,100 @@ async def _verify_workspace_access(
     if workspace.user_id != user_id:
         raise HTTPException(status_code=403, detail="Not your workspace")
     return workspace
+
+
+async def _count_claims(db: AsyncSession, doc_id: int) -> int:
+    """Return the number of atomic claims linked to a source document."""
+    result = await db.execute(
+        select(func.count()).where(AtomicClaim.source_document_id == doc_id)
+    )
+    return result.scalar_one()
+
+
+async def _source_with_claims(db: AsyncSession, doc: SourceDocument) -> SourceResponse:
+    """Build a SourceResponse with claim_count populated."""
+    count = await _count_claims(db, doc.id)
+    resp = SourceResponse.model_validate(doc)
+    resp.claim_count = count
+    return resp
+
+
+# ── POST /api/sources/upload (direct multipart) ────────────────────────────
+
+
+@router.post("/upload", response_model=SourceResponse, status_code=201)
+async def upload_source_direct(
+    file: UploadFile = File(...),
+    workspace_id: int = Form(...),
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SourceResponse:
+    """Direct file upload via multipart/form-data.
+
+    Stores the file in S3 (if configured), registers the source document,
+    and kicks off the ingestion pipeline.
+    """
+    await _verify_workspace_access(db, workspace_id, user_id)
+
+    content_type = file.content_type or "application/octet-stream"
+    s3_key = f"sources/{workspace_id}/{uuid4()}/{file.filename}"
+
+    # Read file content
+    content = await file.read()
+    size_bytes = len(content)
+
+    # Try to upload to S3
+    try:
+        from app.services.s3 import _get_client
+        from app.core.config import get_settings as _gs
+
+        _settings = _gs()
+        client = _get_client()
+        client.put_object(
+            Bucket=_settings.s3_bucket_name,
+            Key=s3_key,
+            Body=content,
+            ContentType=content_type,
+        )
+    except Exception:
+        logger.warning("S3 upload skipped (not configured) for %s", file.filename)
+
+    doc = SourceDocument(
+        workspace_id=workspace_id,
+        uploader_id=user_id,
+        filename=file.filename or "unnamed",
+        s3_key=s3_key,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        status="uploaded",
+    )
+    db.add(doc)
+    await db.flush()
+    await db.refresh(doc)
+
+    # Kick off async ingestion pipeline via Celery
+    try:
+        from app.workers.celery_app import ingest_source_document_task
+
+        ingest_source_document_task.delay(
+            source_doc_id=doc.id,
+            workspace_id=doc.workspace_id,
+            s3_key=doc.s3_key,
+            filename=doc.filename,
+            content_type=doc.content_type,
+        )
+    except Exception:
+        logger.warning(
+            "Celery not available — ingestion skipped for doc %s", doc.id
+        )
+
+    logger.info(
+        "Direct upload: registered source doc id=%s, workspace=%s",
+        doc.id,
+        doc.workspace_id,
+    )
+
+    return SourceResponse.model_validate(doc)
 
 
 # ── POST /api/sources/upload-url ─────────────────────────────────────────────
@@ -156,7 +253,7 @@ async def list_sources(
         .order_by(SourceDocument.created_at.desc())
     )
     docs = result.scalars().all()
-    return [SourceResponse.model_validate(d) for d in docs]
+    return [await _source_with_claims(db, d) for d in docs]
 
 
 # ── DELETE /api/sources/{source_id} ──────────────────────────────────────────

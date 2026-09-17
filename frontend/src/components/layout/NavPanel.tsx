@@ -12,9 +12,10 @@ import {
   GitBranch,
   PanelLeftClose,
   PanelLeftOpen,
+  Trash2,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
-import type { WikiPage } from "@/components/layout/CenterStage";
+import type { WikiPage, ChatSession } from "@/components/layout/CenterStage";
 import type { UserRole, ViewTab } from "@/lib/types";
 
 interface NavPanelProps {
@@ -23,6 +24,10 @@ interface NavPanelProps {
   userRole: UserRole;
   wikiPages: WikiPage[];
   onWikiSelect: (id: string) => void;
+  sessions?: ChatSession[];
+  activeSessionId?: string | null;
+  onSessionSelect?: (id: string) => void;
+  onDeleteSession?: (id: string) => void;
 }
 
 interface NavItem {
@@ -42,7 +47,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: <BarChart3 className="h-4 w-4" />, teacherOnly: true },
 ];
 
-export function NavPanel({ activeTab, onTabChange, userRole, wikiPages, onWikiSelect }: NavPanelProps) {
+export function NavPanel({ activeTab, onTabChange, userRole, wikiPages, onWikiSelect, sessions, activeSessionId, onSessionSelect, onDeleteSession }: NavPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   const visibleItems = NAV_ITEMS.filter(
@@ -97,6 +102,62 @@ export function NavPanel({ activeTab, onTabChange, userRole, wikiPages, onWikiSe
           );
         })}
       </nav>
+
+      <Separator />
+
+      {/* Conversations */}
+      {!collapsed && sessions && sessions.length > 0 ? (
+        <div className="px-4 py-3">
+          <p className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Conversations
+          </p>
+          <div className="space-y-0.5">
+            {sessions.slice(0, 5).map((s) => (
+              <div
+                key={s.id}
+                className={`group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm transition-colors hover:bg-accent hover:text-foreground ${
+                  activeSessionId === s.id
+                    ? "bg-primary/5 font-medium text-foreground"
+                    : "text-muted-foreground"
+                }`}
+              >
+                <button
+                  onClick={() => {
+                    onSessionSelect?.(s.id);
+                    onTabChange("chat");
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2"
+                >
+                  <MessageSquare className="h-3 w-3 shrink-0" />
+                  <span className="min-w-0 truncate">{s.title}</span>
+                  <span className="ml-auto shrink-0 font-mono text-[10px]">
+                    {s.messages.length}
+                  </span>
+                </button>
+                {onDeleteSession && (
+                  <button
+                    onClick={() => onDeleteSession(s.id)}
+                    className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                    title="Delete conversation"
+                  >
+                    <Trash2 className="h-3 w-3 text-red-400 hover:text-red-600" />
+                  </button>
+                )}
+              </div>
+            ))}
+            {sessions.length > 5 && (
+              <p className="px-2 font-mono text-[10px] text-muted-foreground">
+                +{sessions.length - 5} more
+              </p>
+            )}
+          </div>
+        </div>
+      ) : collapsed && sessions && sessions.length > 0 ? (
+        <div className="flex flex-col items-center gap-1 py-3" title={`${sessions.length} conversations`}>
+          <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="font-mono text-[9px] text-muted-foreground">{sessions.length}</span>
+        </div>
+      ) : null}
 
       <Separator />
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Upload,
   FileText,
@@ -12,8 +12,13 @@ import {
   X,
 } from "lucide-react";
 import type { SourceDocument, UserRole } from "@/lib/types";
+import {
+  listSourceDocs,
+  uploadSourceDoc,
+  deleteSourceDoc,
+} from "@/lib/api";
 
-// ── Demo data ─────────────────────────────────────────────────────────────────
+// ── Demo fallback data ───────────────────────────────────────────────────────
 
 const INITIAL_DOCS: SourceDocument[] = [
   {
@@ -59,6 +64,12 @@ function formatDate(iso: string): string {
 }
 
 const STATUS_BADGE: Record<SourceDocument["status"], React.ReactNode> = {
+  uploaded: (
+    <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      Uploading
+    </span>
+  ),
   ready: (
     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
       <CheckCircle2 className="h-3 w-3" />
@@ -80,52 +91,99 @@ const STATUS_BADGE: Record<SourceDocument["status"], React.ReactNode> = {
 };
 
 interface SourceDocsManagerProps {
+  userId: string;
   userRole: UserRole;
 }
 
-export function SourceDocsManager({ userRole }: SourceDocsManagerProps) {
+export function SourceDocsManager({ userId, userRole }: SourceDocsManagerProps) {
   const canDelete = userRole !== "student";
   const [docs, setDocs] = useState<SourceDocument[]>(INITIAL_DOCS);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Load documents from API on mount ────────────────────────────────────
+
+  const fetchDocs = useCallback(async () => {
+    try {
+      const apiDocs = await listSourceDocs(userId);
+      if (apiDocs.length > 0) {
+        setDocs(apiDocs);
+      }
+      // If API returns empty, keep INITIAL_DOCS as fallback
+    } catch {
+      // API not available — keep hardcoded fallback
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    fetchDocs();
+  }, [fetchDocs]);
+
+  // ── Poll for status updates when any doc is still processing ────────────
+
+  useEffect(() => {
+    const hasProcessing = docs.some(
+      (d) => d.status === "processing" || d.status === "uploaded"
+    );
+
+    if (hasProcessing) {
+      pollRef.current = setInterval(() => {
+        fetchDocs();
+      }, 5000);
+    }
+
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [docs, fetchDocs]);
+
+  // ── Upload handler ──────────────────────────────────────────────────────
 
   const handleUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
 
-    // Simulate upload + processing for each file
     for (const file of Array.from(files)) {
-      const newDoc: SourceDocument = {
-        id: `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        filename: file.name,
-        size_bytes: file.size,
-        uploaded_at: new Date().toISOString(),
-        status: "processing",
-        claim_count: 0,
-      };
-      setDocs((prev) => [newDoc, ...prev]);
-
-      // Simulate processing completing after a delay
-      setTimeout(() => {
-        setDocs((prev) =>
-          prev.map((d) =>
-            d.id === newDoc.id
-              ? { ...d, status: "ready" as const, claim_count: Math.floor(Math.random() * 15) + 3 }
-              : d
-          )
-        );
-      }, 3000 + Math.random() * 2000);
+      try {
+        const uploaded = await uploadSourceDoc(userId, file);
+        setDocs((prev) => [uploaded, ...prev]);
+      } catch {
+        // API upload failed — add a local placeholder so the UI still shows something
+        const fallbackDoc: SourceDocument = {
+          id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          filename: file.name,
+          size_bytes: file.size,
+          uploaded_at: new Date().toISOString(),
+          status: "error",
+          claim_count: 0,
+        };
+        setDocs((prev) => [fallbackDoc, ...prev]);
+      }
     }
 
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
   };
 
-  const handleDelete = (id: string) => {
+  // ── Delete handler ──────────────────────────────────────────────────────
+
+  const handleDelete = async (id: string) => {
+    // Optimistically remove from the UI
     setDocs((prev) => prev.filter((d) => d.id !== id));
     setDeleteConfirm(null);
+
+    try {
+      await deleteSourceDoc(userId, id);
+    } catch {
+      // If the API call fails, re-fetch to restore the correct state
+      fetchDocs();
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {

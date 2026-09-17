@@ -24,20 +24,24 @@ import {
   Bot,
   MessageSquare,
 } from "lucide-react";
-import { evaluateResponse } from "@/lib/api";
+import { evaluateResponse, submitAttempt } from "@/lib/api";
 import type { WikiPage } from "@/components/layout/CenterStage";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type ActivityType =
   | "flashcard"
-  | "multi_choice"
-  | "true_false"
-  | "short_answer"
+  | "quiz"
   | "wrong_on_purpose"
   | "scenario"
   | "feynman"
   | "audio_overview";
+
+export type QuizQuestionType =
+  | "multi_choice"
+  | "true_false"
+  | "short_answer"
+  | "fill_blank";
 
 export interface Activity {
   id: string;
@@ -46,6 +50,10 @@ export interface Activity {
   topic: string;
   xp: number;
   payload?: Record<string, any>;
+  lastResponse?: string;
+  lastFeedback?: { is_correct: boolean; feedback: string };
+  lastSelectedIndex?: number;
+  lastAnswer?: boolean;
 }
 
 let _activityCounter = 100;
@@ -217,7 +225,7 @@ export const TYPE_CONFIG: Record<
   },
 };
 
-const XP_BY_TYPE: Record<ActivityType, number> = {
+export const XP_BY_TYPE: Record<ActivityType, number> = {
   flashcard: 25,
   multi_choice: 50,
   true_false: 30,
@@ -517,6 +525,24 @@ async function callEvaluate(
   activityId: string,
   studentResponse: string
 ): Promise<FeedbackState | null> {
+  // 1. Try the attempt endpoint (works when activityId is a numeric backend ID)
+  const numericId = Number(activityId);
+  if (!isNaN(numericId) && Number.isInteger(numericId)) {
+    try {
+      const data = await submitAttempt("usr_student_demo", {
+        activity_id: numericId,
+        student_response: studentResponse,
+      });
+      return {
+        is_correct: data.outcome === "understood",
+        feedback: data.feedback,
+      };
+    } catch {
+      // Fall through to evaluate endpoint
+    }
+  }
+
+  // 2. Try the evaluate endpoint (works with claim_id strings)
   try {
     const data = await evaluateResponse("usr_student_demo", {
       claim_id: activityId,
@@ -527,6 +553,7 @@ async function callEvaluate(
       feedback: data.feedback,
     };
   } catch {
+    // Backend not available — return null so callers use hardcoded fallback
     return null;
   }
 }
