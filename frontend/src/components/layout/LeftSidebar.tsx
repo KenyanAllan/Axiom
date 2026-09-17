@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   BookOpen,
   Eye,
@@ -40,16 +40,21 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
     .join("")
     .slice(0, 2);
 
+  const onWorkbenchChangeRef = useRef(onWorkbenchChange);
+  onWorkbenchChangeRef.current = onWorkbenchChange;
+  const activeIdRef = useRef(activeWorkbenchId);
+  activeIdRef.current = activeWorkbenchId;
+
   const loadWorkbenches = useCallback(() => {
     listWorkbenches(user.id)
       .then((ws) => {
         setWorkbenches(ws);
-        if (ws.length > 0 && activeWorkbenchId == null) {
-          onWorkbenchChange?.(ws[0].id);
+        if (ws.length > 0 && activeIdRef.current == null) {
+          onWorkbenchChangeRef.current?.(ws[0].id);
         }
       })
       .catch(() => {});
-  }, [user.id, activeWorkbenchId, onWorkbenchChange]);
+  }, [user.id]);
 
   useEffect(() => {
     loadWorkbenches();

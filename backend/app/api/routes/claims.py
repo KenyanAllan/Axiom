@@ -62,6 +62,9 @@ async def create_claim(
     """Create a new atomic claim under an existing topic."""
     topic = await db.get(Topic, body.topic_id)
     if topic is None:
+        result = await db.execute(select(Topic).where(Topic.slug == body.topic_id))
+        topic = result.scalar_one_or_none()
+    if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{body.topic_id}' not found")
 
     import re
@@ -84,7 +87,7 @@ async def create_claim(
 
     claim = AtomicClaim(
         id=claim_id,
-        topic_id=body.topic_id,
+        topic_id=topic.id,
         title=body.title,
         content=body.content,
         diagnostic_prompt=body.diagnostic_prompt,
@@ -96,7 +99,7 @@ async def create_claim(
     await db.flush()
     await db.refresh(claim)
 
-    logger.info("Created claim '%s' under topic '%s'", claim_id, body.topic_id)
+    logger.info("Created claim '%s' under topic '%s'", claim_id, topic.id)
     return ClaimResponse.model_validate(claim)
 
 

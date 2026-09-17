@@ -346,6 +346,13 @@ async def classroom_chat_history(
         .scalar_subquery()
     )
 
+    base_filter = (
+        select(ChatSession.id)
+        .join(Workspace, ChatSession.workspace_id == Workspace.id)
+        .where(Workspace.classroom_id == classroom_id)
+    )
+    total = (await db.execute(select(func.count()).select_from(base_filter.subquery()))).scalar_one()
+
     stmt = (
         select(ChatSession, User.display_name, msg_count.label("message_count"))
         .join(Workspace, ChatSession.workspace_id == Workspace.id)
@@ -370,7 +377,7 @@ async def classroom_chat_history(
             }
             for row in rows
         ],
-        "total": len(rows),
+        "total": total,
     }
 
 

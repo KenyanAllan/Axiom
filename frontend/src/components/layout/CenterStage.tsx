@@ -823,9 +823,23 @@ export function CenterStage({
       setChatContext([]);
       setIsTyping(true);
 
-      // Find the backend session ID
+      // Find or create the backend session ID
       const currentSession = sessions.find((s) => s.id === targetSessionId);
-      const backendId = currentSession?.backendId;
+      let backendId = currentSession?.backendId;
+
+      if (!backendId) {
+        try {
+          const backendSession = await createChatSession(userId, currentSession?.title || "New Chat");
+          backendId = backendSession.id;
+          onSessionsChange((prev: ChatSession[]) =>
+            prev.map((s) =>
+              s.id === targetSessionId ? { ...s, backendId: backendSession.id } : s
+            )
+          );
+        } catch (err) {
+          console.error("CenterStage: failed to create backend session:", err);
+        }
+      }
 
       if (backendId) {
         try {
@@ -840,25 +854,33 @@ export function CenterStage({
               sources: reply.sources,
             },
           ]);
-          setIsTyping(false);
-          return;
         } catch (err) {
-          console.error("CenterStage: failed to send message to existing session:", err);
+          console.error("CenterStage: failed to send message:", err);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `m${++_msgId}`,
+              role: "assistant",
+              text: "Something went wrong reaching the server. Please try again in a moment.",
+              time: ts(),
+            },
+          ]);
+        } finally {
+          setIsTyping(false);
         }
+        return;
       }
 
-      setTimeout(() => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `m${++_msgId}`,
-            role: "assistant",
-            text: "I'm processing your question. In production, this would call the Axiom backend using Amazon Bedrock to generate a contextual response based on your knowledge graph and learning progress.",
-            time: ts(),
-          },
-        ]);
-        setIsTyping(false);
-      }, 1500);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `m${++_msgId}`,
+          role: "assistant",
+          text: "Could not connect to the server. Please check your connection and try again.",
+          time: ts(),
+        },
+      ]);
+      setIsTyping(false);
     },
     [activeTab, onTabChange, chatContext, activeSessionId, sessions, onSessionsChange, onActiveSessionIdChange, userId, stagedImages]
   );

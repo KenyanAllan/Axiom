@@ -115,8 +115,6 @@ async def _source_with_claims(db: AsyncSession, doc: SourceDocument) -> SourceRe
 
 @router.post("/upload", response_model=SourceResponse, status_code=201)
 @router.post("/upload/", response_model=SourceResponse, status_code=201)
-@router.options("/upload")
-@router.options("/upload/")
 async def upload_source_direct(
     request: Request,
     file: UploadFile = File(...),

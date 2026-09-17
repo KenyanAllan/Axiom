@@ -510,11 +510,14 @@ async def flashcard_stack(
     """
     topic = await db.get(Topic, topic_id)
     if topic is None:
+        result = await db.execute(select(Topic).where(Topic.slug == topic_id))
+        topic = result.scalar_one_or_none()
+    if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
 
     # Get claim IDs in this topic
     claim_result = await db.execute(
-        select(AtomicClaim.id).where(AtomicClaim.topic_id == topic_id)
+        select(AtomicClaim.id).where(AtomicClaim.topic_id == topic.id)
     )
     claim_ids = [row[0] for row in claim_result.all()]
 
@@ -533,7 +536,7 @@ async def flashcard_stack(
         # Prerequisites of this topic
         prereq_result = await db.execute(
             select(TopicPrerequisite.prerequisite_id).where(
-                TopicPrerequisite.topic_id == topic_id
+                TopicPrerequisite.topic_id == topic.id
             )
         )
         neighbor_ids = {row[0] for row in prereq_result.all()}
@@ -541,7 +544,7 @@ async def flashcard_stack(
         # Topics that depend on this topic
         dep_result = await db.execute(
             select(TopicPrerequisite.topic_id).where(
-                TopicPrerequisite.prerequisite_id == topic_id
+                TopicPrerequisite.prerequisite_id == topic.id
             )
         )
         neighbor_ids |= {row[0] for row in dep_result.all()}

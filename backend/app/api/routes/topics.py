@@ -57,6 +57,14 @@ def _slugify(title: str) -> str:
     return slug
 
 
+async def _resolve_topic(db: AsyncSession, id_or_slug: str) -> Topic | None:
+    topic = await db.get(Topic, id_or_slug)
+    if topic is not None:
+        return topic
+    result = await db.execute(select(Topic).where(Topic.slug == id_or_slug))
+    return result.scalar_one_or_none()
+
+
 async def would_create_cycle(
     db: AsyncSession, topic_id: str, new_prerequisite_id: str
 ) -> bool:
@@ -126,8 +134,7 @@ async def get_topic(
     db: AsyncSession = Depends(get_db),
 ) -> TopicDetailResponse:
     """Return topic content, claims, and prerequisite mastery status."""
-    stmt = select(Topic).where(Topic.slug == slug)
-    topic = (await db.execute(stmt)).scalar_one_or_none()
+    topic = await _resolve_topic(db, slug)
     if topic is None:
         logger.warning("Topic not found: slug=%s", slug)
         raise HTTPException(status_code=404, detail=f"Topic '{slug}' not found")
@@ -183,7 +190,7 @@ async def get_topic(
 
 # ── GET /api/frontier ───────────────────────────────────────────────────────
 
-FRONTIER_CTE_SQL = text("""
+_FRONTIER_CTE_TEMPLATE = """
 WITH topic_claim_counts AS (
     SELECT
         t.id AS topic_id,
@@ -195,6 +202,7 @@ WITH topic_claim_counts AS (
     LEFT JOIN atomic_claims ac ON ac.topic_id = t.id
     LEFT JOIN user_mastery um
         ON um.claim_id = ac.id AND um.user_id = :user_id
+    {workspace_filter}
     GROUP BY t.id, t.slug, t.title
 ),
 fully_mastered_topics AS (
@@ -205,8 +213,8 @@ fully_mastered_topics AS (
 frontier AS (
     SELECT tc.*
     FROM topic_claim_counts tc
-    WHERE tc.mastered_count < tc.claim_count     -- not fully mastered
-      AND NOT EXISTS (                           -- all prereqs are mastered
+    WHERE tc.mastered_count < tc.claim_count
+      AND NOT EXISTS (
           SELECT 1
           FROM topic_prerequisites tp
           WHERE tp.topic_id = tc.topic_id
@@ -216,11 +224,12 @@ frontier AS (
 SELECT topic_id, slug, title, claim_count, mastered_count
 FROM frontier
 ORDER BY mastered_count DESC, title ASC
-""")
+"""
 
 
 @router.get("/frontier", response_model=FrontierResponse)
 async def get_frontier(
+    workspace_id: int | None = Query(None, description="Filter by workspace"),
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> FrontierResponse:
@@ -230,7 +239,14 @@ async def get_frontier(
       - It is NOT fully mastered, AND
       - ALL of its prerequisite topics ARE fully mastered (or it has none).
     """
-    rows = (await db.execute(FRONTIER_CTE_SQL, {"user_id": user_id})).all()
+    params: dict = {"user_id": user_id}
+    if workspace_id is not None:
+        ws_filter = "WHERE t.workspace_id = :workspace_id"
+        params["workspace_id"] = workspace_id
+    else:
+        ws_filter = ""
+    sql = text(_FRONTIER_CTE_TEMPLATE.format(workspace_filter=ws_filter))
+    rows = (await db.execute(sql, params)).all()
 
     logger.debug("Fetched frontier: user_id=%s, topics=%d", user_id, len(rows))
     return FrontierResponse(
@@ -308,7 +324,7 @@ async def update_topic(
     db: AsyncSession = Depends(get_db),
 ) -> TopicSummary:
     """Update a topic's title and/or summary."""
-    topic = await db.get(Topic, topic_id)
+    topic = await _resolve_topic(db, topic_id)
     if topic is None:
         logger.warning("Topic not found for update: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
@@ -332,7 +348,7 @@ async def delete_topic(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Delete a topic. Claims cascade via FK."""
-    topic = await db.get(Topic, topic_id)
+    topic = await _resolve_topic(db, topic_id)
     if topic is None:
         logger.warning("Topic not found for deletion: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
@@ -353,12 +369,12 @@ async def add_prerequisite(
     db: AsyncSession = Depends(get_db),
 ):
     """Add a prerequisite edge to a topic (with cycle detection)."""
-    topic = await db.get(Topic, topic_id)
+    topic = await _resolve_topic(db, topic_id)
     if topic is None:
         logger.warning("Topic not found for prerequisite add: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
 
-    prereq = await db.get(Topic, body.prerequisite_id)
+    prereq = await _resolve_topic(db, body.prerequisite_id)
     if prereq is None:
         logger.warning("Prerequisite topic not found: prerequisite_id=%s", body.prerequisite_id)
         raise HTTPException(status_code=404, detail=f"Prerequisite topic '{body.prerequisite_id}' not found")
@@ -367,25 +383,25 @@ async def add_prerequisite(
     existing = (
         await db.execute(
             select(TopicPrerequisite).where(
-                TopicPrerequisite.topic_id == topic_id,
-                TopicPrerequisite.prerequisite_id == body.prerequisite_id,
+                TopicPrerequisite.topic_id == topic.id,
+                TopicPrerequisite.prerequisite_id == prereq.id,
             )
         )
     ).scalar_one_or_none()
     if existing is not None:
-        logger.warning("Duplicate prerequisite edge: topic_id=%s, prereq_id=%s", topic_id, body.prerequisite_id)
+        logger.warning("Duplicate prerequisite edge: topic_id=%s, prereq_id=%s", topic.id, prereq.id)
         raise HTTPException(status_code=409, detail="Prerequisite edge already exists")
 
-    if await would_create_cycle(db, topic_id, body.prerequisite_id):
-        logger.warning("Cycle detected in DAG: topic_id=%s, prereq_id=%s", topic_id, body.prerequisite_id)
+    if await would_create_cycle(db, topic.id, prereq.id):
+        logger.warning("Cycle detected in DAG: topic_id=%s, prereq_id=%s", topic.id, prereq.id)
         raise HTTPException(
             status_code=400,
             detail="Adding this prerequisite would create a cycle in the topic DAG",
         )
 
-    db.add(TopicPrerequisite(topic_id=topic_id, prerequisite_id=body.prerequisite_id))
+    db.add(TopicPrerequisite(topic_id=topic.id, prerequisite_id=prereq.id))
     await db.flush()
-    return {"topic_id": topic_id, "prerequisite_id": body.prerequisite_id}
+    return {"topic_id": topic.id, "prerequisite_id": prereq.id}
 
 
 # ── DELETE /api/topics/{topic_id}/prerequisites/{prerequisite_id} ────────────
@@ -399,10 +415,15 @@ async def remove_prerequisite(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Remove a prerequisite edge."""
+    topic = await _resolve_topic(db, topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
+    prereq = await _resolve_topic(db, prerequisite_id)
+    resolved_prereq_id = prereq.id if prereq else prerequisite_id
     result = await db.execute(
         delete(TopicPrerequisite).where(
-            TopicPrerequisite.topic_id == topic_id,
-            TopicPrerequisite.prerequisite_id == prerequisite_id,
+            TopicPrerequisite.topic_id == topic.id,
+            TopicPrerequisite.prerequisite_id == resolved_prereq_id,
         )
     )
     if result.rowcount == 0:

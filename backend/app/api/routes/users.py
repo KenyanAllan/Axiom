@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +92,7 @@ async def update_me(
 
 @router.get("/me/mastery", response_model=list[MasteryEntry])
 async def get_my_mastery(
+    workspace_id: int | None = Query(None, description="Filter by workspace"),
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[MasteryEntry]:
@@ -102,6 +103,8 @@ async def get_my_mastery(
         .where(UserMastery.user_id == user_id)
         .order_by(UserMastery.updated_at.desc())
     )
+    if workspace_id is not None:
+        stmt = stmt.where(Topic.workspace_id == workspace_id)
     result = await db.execute(stmt)
     rows = result.all()
 
@@ -124,6 +127,9 @@ async def get_my_mastery(
 
 @router.get("/me/history", response_model=list[HistoryEvent])
 async def get_my_history(
+    workspace_id: int | None = Query(None, description="Filter by workspace"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[HistoryEvent]:
@@ -132,8 +138,13 @@ async def get_my_history(
         .outerjoin(AtomicClaim, ActivityAttempt.claim_id == AtomicClaim.id)
         .where(ActivityAttempt.user_id == user_id)
         .order_by(ActivityAttempt.attempted_at.desc())
-        .limit(50)
+        .offset(offset)
+        .limit(limit)
     )
+    if workspace_id is not None:
+        stmt = stmt.outerjoin(Topic, AtomicClaim.topic_id == Topic.id).where(
+            Topic.workspace_id == workspace_id
+        )
     result = await db.execute(stmt)
     rows = result.all()
 

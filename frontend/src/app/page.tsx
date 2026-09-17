@@ -129,6 +129,7 @@ export default function Home() {
   // ── Load activity feed + queue from API ──────────────────────────────────
   useEffect(() => {
     if (!user?.id || activeWorkbenchId == null) return;
+    setActivities([]);
     const wsId = activeWorkbenchId;
     const loadFeed = fetchActivityFeed(user.id, wsId)
       .then((data) =>
@@ -172,18 +173,16 @@ export default function Home() {
           merged.push(item);
         }
       }
-      if (merged.length > 0) {
-        setActivities(merged);
-      }
+      setActivities(merged);
     });
   }, [user?.id, activeWorkbenchId]);
 
   // ── Load topics + claims for wiki ───────────────────────────────────────
   useEffect(() => {
     if (!user?.id || activeWorkbenchId == null) return;
+    setWikiPages([]);
     Promise.all([fetchTopics(user.id, activeWorkbenchId), fetchClaims(user.id, activeWorkbenchId)])
       .then(([topics, claims]) => {
-        if (topics.length === 0) return;
         const pages: WikiPage[] = topics.map((t) => {
           const topicClaims = claims.filter((c) => c.topic_id === t.id);
           return {
