@@ -65,6 +65,10 @@ async def create_claim(
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{body.topic_id}' not found")
 
+    # Verify workspace access through the topic's workspace
+    if topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
+
     import re
     slug = re.sub(r"[^a-z0-9\s]", "", body.title.lower().strip())
     slug = re.sub(r"\s+", "_", slug)[:60]
@@ -113,12 +117,23 @@ async def list_claims(
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ClaimResponse]:
-    """List atomic claims, optionally filtered by topic or workspace."""
+    """List atomic claims, filtered by topic or workspace."""
+    if topic_id is None and workspace_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Either topic_id or workspace_id query parameter is required",
+        )
+
     stmt = select(AtomicClaim)
 
     if topic_id is not None:
+        # Verify workspace access through the topic
+        topic = await resolve_topic(db, topic_id)
+        if topic is not None and topic.workspace_id is not None:
+            await verify_workspace_access(db, topic.workspace_id, user_id)
         stmt = stmt.where(AtomicClaim.topic_id == topic_id)
     elif workspace_id is not None:
+        await verify_workspace_access(db, workspace_id, user_id)
         stmt = stmt.join(Topic, AtomicClaim.topic_id == Topic.id).where(
             Topic.workspace_id == workspace_id
         )
@@ -143,6 +158,12 @@ async def get_claim(
     claim = await db.get(AtomicClaim, claim_id)
     if claim is None:
         raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found")
+
+    # Verify workspace access through the claim's topic
+    topic = await db.get(Topic, claim.topic_id)
+    if topic is not None and topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
+
     return ClaimResponse.model_validate(claim)
 
 
@@ -160,6 +181,11 @@ async def update_claim(
     claim = await db.get(AtomicClaim, claim_id)
     if claim is None:
         raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found")
+
+    # Verify workspace access through the claim's topic
+    topic = await db.get(Topic, claim.topic_id)
+    if topic is not None and topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
 
     updated_content = False
     if body.title is not None:
@@ -203,6 +229,11 @@ async def delete_claim(
     claim = await db.get(AtomicClaim, claim_id)
     if claim is None:
         raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found")
+
+    # Verify workspace access through the claim's topic
+    topic = await db.get(Topic, claim.topic_id)
+    if topic is not None and topic.workspace_id is not None:
+        await verify_workspace_access(db, topic.workspace_id, user_id)
 
     await db.delete(claim)
     await db.flush()

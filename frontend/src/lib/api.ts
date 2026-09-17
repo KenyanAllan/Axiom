@@ -133,7 +133,7 @@ export async function synthesizeSpeech(
   userId: string,
   text: string
 ): Promise<SynthesizeResponse> {
-  const res = await fetch(`${BASE}/api/audio/synthesize`, {
+  const res = await fetchWithTimeout(`${BASE}/api/audio/synthesize`, {
     method: "POST",
     headers: headers(userId),
     body: JSON.stringify({ text }),
@@ -177,10 +177,11 @@ export async function evaluateResponse(
   userId: string,
   body: EvaluateRequest
 ): Promise<EvaluateResult> {
-  const res = await fetch(`${BASE}/api/activities/evaluate`, {
+  const res = await fetchWithTimeout(`${BASE}/api/activities/evaluate`, {
     method: "POST",
     headers: headers(userId),
     body: JSON.stringify(body),
+    timeoutMs: 60_000, // LLM evaluation may take longer
   });
   if (!res.ok) { handle401(res); throw new Error(`Evaluate failed: ${res.status}`); }
   return res.json();
@@ -573,12 +574,13 @@ export async function sendChatMessage(
   if (image_s3_keys && image_s3_keys.length > 0) {
     payload.image_s3_keys = image_s3_keys;
   }
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${BASE}/api/chat/sessions/${sessionId}/messages`,
     {
       method: "POST",
       headers: headers(userId),
       body: JSON.stringify(payload),
+      timeoutMs: 60_000, // Chat messages may take longer due to LLM processing
     }
   );
   if (!res.ok) { handle401(res); throw new Error(`Send message failed: ${res.status}`); }

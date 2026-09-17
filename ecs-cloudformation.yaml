@@ -13,16 +13,19 @@ Parameters:
   DatabaseURL:
     Type: String
     Default: 'sqlite+aiosqlite:////tmp/axiom.db'
+    NoEcho: true
     Description: Database connection URL (defaults to standalone SQLite).
 
   SyncDatabaseURL:
     Type: String
     Default: 'sqlite:////tmp/axiom.db'
+    NoEcho: true
     Description: Synchronous database connection URL for migrations.
 
   RedisURL:
     Type: String
     Default: 'redis://localhost:6379/0'
+    NoEcho: true
     Description: Redis URL for Celery task broker.
 
   JWTSecretKey:

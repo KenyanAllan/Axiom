@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
+from app.api.deps import verify_workspace_access
 from app.models.tables import GlossaryTerm, User, Workspace
 from app.schemas.glossary import (
     GlossarySearchRequest,

@@ -35,10 +35,16 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 
 if "*" in origins or not origins:
+    if settings.environment == "production":
+        logger.warning(
+            "CORS_ORIGINS is wildcard or empty in production — "
+            "allowing all origins WITHOUT credentials. "
+            "Set CORS_ORIGINS to specific origins for production."
+        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"https?://.*",
-        allow_credentials=True,
+        allow_origins=["*"],
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

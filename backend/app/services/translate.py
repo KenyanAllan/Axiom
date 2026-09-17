@@ -44,6 +44,34 @@ def detect_language(text: str) -> str:
         return "en"
 
 
+_TRANSLATE_MAX_BYTES = 9500  # Stay under AWS Translate's 10,000-byte limit
+
+
+def _chunk_text_for_translate(text: str, max_bytes: int = _TRANSLATE_MAX_BYTES) -> list[str]:
+    """Split text into chunks that each fit within the byte limit."""
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        encoded = remaining.encode("utf-8")
+        if len(encoded) <= max_bytes:
+            chunks.append(remaining)
+            break
+        # Find a safe split point within the byte limit
+        truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+        split_pos = truncated.rfind(". ")
+        if split_pos == -1:
+            split_pos = truncated.rfind("\n")
+        if split_pos == -1:
+            split_pos = truncated.rfind(" ")
+        if split_pos == -1:
+            split_pos = len(truncated)
+        else:
+            split_pos += 1  # Include the delimiter
+        chunks.append(remaining[:split_pos])
+        remaining = remaining[split_pos:].lstrip()
+    return chunks
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 def translate_text(
     text: str,
@@ -56,19 +84,25 @@ def translate_text(
 
     client = _get_translate_client()
 
-    kwargs: dict[str, Any] = {
-        "Text": text,
-        "SourceLanguageCode": source_lang,
-        "TargetLanguageCode": target_lang,
-    }
-    if terminology_names:
-        kwargs["TerminologyNames"] = terminology_names
+    chunks = _chunk_text_for_translate(text)
+    translated_parts: list[str] = []
 
-    response = client.translate_text(**kwargs)
-    translated = response["TranslatedText"]
+    for chunk in chunks:
+        kwargs: dict[str, Any] = {
+            "Text": chunk,
+            "SourceLanguageCode": source_lang,
+            "TargetLanguageCode": target_lang,
+        }
+        if terminology_names:
+            kwargs["TerminologyNames"] = terminology_names
+
+        response = client.translate_text(**kwargs)
+        translated_parts.append(response["TranslatedText"])
+
+    translated = " ".join(translated_parts)
     logger.info(
-        "Translated %d chars %s→%s (%d chars out)",
-        len(text), source_lang, target_lang, len(translated),
+        "Translated %d chars %s→%s (%d chars out, %d chunks)",
+        len(text), source_lang, target_lang, len(translated), len(chunks),
     )
     return translated
 

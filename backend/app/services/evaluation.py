@@ -417,8 +417,8 @@ async def evaluate_quiz(
             correct_count += 1
 
         # Update mastery for this claim
+        rating_delta = calculate_rating_change(difficulty, outcome, False)
         if claim_id:
-            rating_delta = calculate_rating_change(difficulty, outcome, False)
             await apply_rating_change(db, user_id, claim_id, rating_delta)
 
         xp = calculate_xp_reward(difficulty, outcome, streak_days)

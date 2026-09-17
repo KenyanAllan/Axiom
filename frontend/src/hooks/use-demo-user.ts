@@ -66,6 +66,9 @@ export function useDemoUser() {
   }, [allUsers]);
 
   const loginWithToken = useCallback((token: string, profile: UserProfile) => {
+    // Clear previous user's workspace before setting the new auth state,
+    // so a stale workspace ID never leaks across accounts.
+    localStorage.removeItem(WORKSPACE_KEY);
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(STORAGE_KEY, profile.id);
     if (profile.workspace_id) {

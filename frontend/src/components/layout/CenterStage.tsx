@@ -587,6 +587,17 @@ export function CenterStage({
     }
   }, [messages, activeTab]);
 
+  // Clean up SpeechRecognition on unmount so the browser stops listening
+  useEffect(() => {
+    return () => {
+      if (recRef.current) {
+        try { recRef.current.stop(); } catch (_) {}
+        try { recRef.current.abort(); } catch (_) {}
+        recRef.current = null;
+      }
+    };
+  }, []);
+
   // ── Load graph data from API ───────────────────────────────────────────────
   useEffect(() => {
     if (!userId || activeWorkbenchId == null) return;

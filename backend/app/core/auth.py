@@ -21,6 +21,21 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# ── Demo auth safety gate ──────────────────────────────────────────────────
+# In production, demo auth MUST be disabled regardless of env var.
+_demo_auth_enabled = settings.enable_demo_auth and settings.environment != "production"
+if settings.enable_demo_auth and settings.environment == "production":
+    logger.warning(
+        "ENABLE_DEMO_AUTH=true is set in a PRODUCTION environment — "
+        "demo auth has been FORCE-DISABLED. Remove ENABLE_DEMO_AUTH or set it to false."
+    )
+elif _demo_auth_enabled:
+    logger.warning(
+        "Demo authentication is ENABLED (environment=%s). "
+        "Do NOT use this in production.",
+        settings.environment,
+    )
+
 # ── Password hashing ────────────────────────────────────────────────────────
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -84,9 +99,9 @@ async def get_current_user(
         logger.debug("Authenticated user %s via JWT", user_id)
         return user_id
 
-    # 2. Demo auth fallback (disabled in production via ENABLE_DEMO_AUTH=false)
+    # 2. Demo auth fallback (force-disabled in production regardless of env var)
     if x_demo_user:
-        if not settings.enable_demo_auth:
+        if not _demo_auth_enabled:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Demo authentication is disabled. Use Bearer token auth.",
@@ -99,8 +114,8 @@ async def get_current_user(
         logger.debug("Authenticated user %s via demo header", x_demo_user)
         return x_demo_user
 
-    # 3. Demo mode default fallback
-    if settings.enable_demo_auth:
+    # 3. Demo mode default fallback (never in production)
+    if _demo_auth_enabled:
         logger.debug("No credentials provided, defaulting to demo user usr_student_demo")
         return "usr_student_demo"
 
