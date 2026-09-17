@@ -1,9 +1,6 @@
-"""Alembic env — reads the app config and targets the ORM metadata."""
-
-from logging.config import fileConfig
-
-from alembic import context
-from sqlalchemy import engine_from_config, pool
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings
 from app.core.database import Base
@@ -13,7 +10,16 @@ config = context.config
 settings = get_settings()
 
 # Override the sqlalchemy.url from alembic.ini with the app's setting
-config.set_main_option("sqlalchemy.url", settings.sync_database_url)
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
+
+db_url = os.getenv("SYNC_DATABASE_URL")
+if db_url:
+    config.set_main_option("sqlalchemy.url", db_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

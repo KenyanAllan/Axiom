@@ -114,8 +114,13 @@ async def apply_rating_change(
     mastery.status = new_status
     mastery.updated_at = now
 
-    # ── Drop queue entries when mastered (spec 1.1) ──────────────────────────
+    logger.info(
+        "Rating change applied: user_id=%s, claim_id=%s, old=%d, new=%d, delta=%d, status=%s",
+        user_id, claim_id, old_rating, new_rating, delta, new_status,
+    )
+
     if new_status == "mastered":
+        logger.info("Claim mastered: user_id=%s, claim_id=%s", user_id, claim_id)
         await _drop_mastered_queue_entries(db, user_id, claim_id)
 
     return new_rating, new_status

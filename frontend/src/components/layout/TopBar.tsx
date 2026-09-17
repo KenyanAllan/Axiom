@@ -12,7 +12,7 @@ export function TopBar() {
           Axiom
         </span>
         <span className="font-mono text-xs text-muted-foreground">
-          / v0.1.0 :: main :: workspace-active
+          / v0.1.0 :: main :: workbench-active
         </span>
       </div>
     </header>

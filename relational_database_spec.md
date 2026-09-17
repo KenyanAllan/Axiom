@@ -273,7 +273,7 @@ Activity specifications, student queues, attempts, and rubrics.
 | `created_by_user_id` | Identifier | Foreign Key -> `User.id`, Required | Creator (Teacher or Student) user ID |
 | `scope` | Enum | Required (`CLASSROOM_SHARED`, `STUDENT_PERSONAL`) | Visibility scope (Broad to classroom vs Personal to student) |
 | `title` | String | Required | Activity title |
-| `activity_type` | Enum | Required (`flashcard`, `quiz_multichoice`, `quiz_truefalse`, `quiz_shortanswer`, `wrong_on_purpose`, `feynman_diagnostic`, `scenario`, `micro_project`, `audio_overview`) | Format category |
+| `activity_type` | Enum | Required (`flashcard`, `quiz_multichoice`, `quiz_truefalse`, `quiz_shortanswer`, `wrong_on_purpose`, `feynman_diagnostic`, `scenario`, `micro_project`, `mini_podcast`) | Format category |
 | `difficulty` | Integer | Required, Default: `1`, Range: `1` to `3` | Complexity level |
 | `friction_levers_json` | Object / JSON | Optional | Noise, representation, and scaffolding settings |
 | `scaffold_hints_json` | Array / JSON | Optional | Progressive hints array |

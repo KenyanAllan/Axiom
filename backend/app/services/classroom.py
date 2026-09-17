@@ -64,7 +64,8 @@ async def create_classroom(
         join_code=code,
     )
     db.add(classroom)
-    await db.flush()  # Populate classroom.id
+    await db.flush()
+    logger.info("Classroom created: id=%s teacher_id=%s title=%s", classroom.id, teacher_id, title)
 
     # Auto-provision shared workspace (spec 8.2)
     workspace = Workspace(
@@ -92,6 +93,8 @@ async def join_classroom(
     Returns {classroom_id, classroom_title, workspace_id}.
     Raises ValueError on invalid code or duplicate enrollment.
     """
+    logger.info("Join classroom: student_id=%s join_code=%s", student_id, join_code)
+
     # 1. Validate join_code
     result = await db.execute(
         select(Classroom)
@@ -289,6 +292,8 @@ async def get_student_progress(
                 "activity_id": a.activity_id,
                 "claim_id": a.claim_id,
                 "outcome": a.outcome,
+                "student_response": a.student_response,
+                "feedback": a.feedback,
                 "xp_awarded": a.xp_awarded,
                 "attempted_at": a.attempted_at.isoformat() if a.attempted_at else None,
             }
@@ -370,6 +375,77 @@ async def get_diagnostic(
     }
 
 
+async def get_classroom_activity_history(
+    db: AsyncSession,
+    teacher_id: str,
+    classroom_id: int,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Return chronological activity attempts for all students in a classroom."""
+    logger.info("Get classroom activity history: classroom_id=%s teacher_id=%s", classroom_id, teacher_id)
+    from app.models.tables import ActivityAttempt, AtomicClaim
+
+    classroom = (
+        await db.execute(
+            select(Classroom)
+            .where(Classroom.id == classroom_id, Classroom.teacher_id == teacher_id)
+            .options(selectinload(Classroom.workspace))
+        )
+    ).scalar_one_or_none()
+    if classroom is None:
+        raise ValueError("Classroom not found or access denied")
+
+    workspace = classroom.workspace
+    if workspace is None:
+        return {"classroom_id": classroom_id, "items": [], "total": 0}
+
+    base_query = (
+        select(ActivityAttempt)
+        .join(Activity, ActivityAttempt.activity_id == Activity.id)
+        .where(Activity.workspace_id == workspace.id)
+    )
+
+    from sqlalchemy import func
+
+    count_result = await db.execute(
+        select(func.count()).select_from(base_query.subquery())
+    )
+    total = count_result.scalar() or 0
+
+    attempts_result = await db.execute(
+        base_query
+        .options(
+            selectinload(ActivityAttempt.user),
+            selectinload(ActivityAttempt.activity),
+            selectinload(ActivityAttempt.claim),
+        )
+        .order_by(ActivityAttempt.attempted_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    attempts = attempts_result.scalars().all()
+
+    items = []
+    for a in attempts:
+        items.append({
+            "id": a.id,
+            "student_id": a.user_id,
+            "student_name": a.user.display_name if a.user else "Unknown",
+            "activity_type": a.activity.type if a.activity else "unknown",
+            "activity_title": a.activity.title if a.activity else "Unknown Activity",
+            "claim_title": a.claim.title if a.claim else None,
+            "outcome": a.outcome,
+            "student_response": a.student_response,
+            "feedback": a.feedback,
+            "xp_awarded": a.xp_awarded,
+            "attempted_at": a.attempted_at.isoformat() if a.attempted_at else None,
+            "activity_payload": a.activity.payload if a.activity else None,
+        })
+
+    return {"classroom_id": classroom_id, "items": items, "total": total}
+
+
 async def broadcast_activity_to_class(
     db: AsyncSession,
     classroom_id: int,
@@ -384,6 +460,8 @@ async def broadcast_activity_to_class(
         )
     )
     student_ids = [row[0] for row in enrollments_result.all()]
+
+    logger.info("Broadcasting activity_id=%s to classroom_id=%s (%d students)", activity_id, classroom_id, len(student_ids))
 
     if not student_ids:
         return

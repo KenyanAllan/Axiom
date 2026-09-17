@@ -7,11 +7,11 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.core.config import get_settings
+from app.core.rate_limit import limiter
 
 settings = get_settings()
 
@@ -20,8 +20,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="Axiom API",
@@ -40,8 +38,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Demo-User", "Accept"],
 )
 
 # ── Global exception handler ─────────────────────────────────────────────────
@@ -68,6 +66,10 @@ from app.api.routes.sources import router as sources_router
 from app.api.routes.search import router as search_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.dag import router as dag_router
+from app.api.routes.claims import router as claims_router
+from app.api.routes.audio import router as audio_router
+from app.api.routes.glossary import router as glossary_router
+from app.api.routes.figures import router as figures_router
 
 app.include_router(auth_router)
 app.include_router(activities_router)
@@ -79,6 +81,10 @@ app.include_router(sources_router)
 app.include_router(search_router)
 app.include_router(chat_router)
 app.include_router(dag_router)
+app.include_router(claims_router)
+app.include_router(audio_router)
+app.include_router(glossary_router)
+app.include_router(figures_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
@@ -94,7 +100,8 @@ async def health():
         async with async_session_factory() as session:
             await session.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception:
+    except Exception as exc:
+        logger.warning("Health check: database unavailable: %s", exc)
         checks["database"] = "unavailable"
 
     try:
@@ -102,7 +109,8 @@ async def health():
         r = redis_lib.from_url(settings.redis_url, socket_connect_timeout=2)
         r.ping()
         checks["redis"] = "ok"
-    except Exception:
+    except Exception as exc:
+        logger.warning("Health check: Redis unavailable: %s", exc)
         checks["redis"] = "unavailable"
 
     all_ok = all(v == "ok" for v in checks.values())

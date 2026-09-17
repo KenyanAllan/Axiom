@@ -20,6 +20,32 @@
     --input: 220 13% 91%;
     --ring: 226 70% 55%;
     --radius: 0.5rem;
+    --sidebar: 222 47% 96%;
+    --sidebar-foreground: 224 10% 10%;
+    --sidebar-border: 220 30% 88%;
+    --sidebar-muted: 220 20% 46%;
+  }
+
+  .dark {
+    --background: 224 10% 8%;
+    --foreground: 210 20% 92%;
+    --card: 224 10% 11%;
+    --card-foreground: 210 20% 92%;
+    --primary: 226 70% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 16%;
+    --secondary-foreground: 210 20% 92%;
+    --muted: 220 14% 16%;
+    --muted-foreground: 220 9% 55%;
+    --accent: 220 14% 18%;
+    --accent-foreground: 210 20% 92%;
+    --border: 220 13% 20%;
+    --input: 220 13% 20%;
+    --ring: 226 70% 60%;
+    --sidebar: 222 30% 12%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-border: 220 20% 22%;
+    --sidebar-muted: 220 9% 55%;
   }
 }
 
@@ -51,8 +77,8 @@
 
 /* Code block styling */
 .code-block {
-  @apply rounded-md border bg-slate-50 p-4 font-mono text-sm leading-relaxed;
+  @apply rounded-md border bg-slate-50 p-4 font-mono text-sm leading-relaxed dark:bg-slate-900;
 }
 .code-block .filename {
-  @apply -mx-4 -mt-4 mb-3 flex items-center justify-between border-b bg-slate-100 px-4 py-2 text-xs text-muted-foreground;
+  @apply -mx-4 -mt-4 mb-3 flex items-center justify-between border-b bg-slate-100 px-4 py-2 text-xs text-muted-foreground dark:bg-slate-800;
 }

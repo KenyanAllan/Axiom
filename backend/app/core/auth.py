@@ -8,6 +8,7 @@ Priority:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Header, HTTPException, status
@@ -15,6 +16,8 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -55,7 +58,8 @@ def _decode_token(token: str) -> str:
                 detail="Invalid token: missing sub claim",
             )
         return user_id
-    except JWTError:
+    except JWTError as exc:
+        logger.warning("JWT decode failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
@@ -76,18 +80,27 @@ async def get_current_user(
     # 1. JWT auth
     if authorization and authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
-        return _decode_token(token)
+        user_id = _decode_token(token)
+        logger.debug("Authenticated user %s via JWT", user_id)
+        return user_id
 
-    # 2. Demo auth fallback
+    # 2. Demo auth fallback (disabled in production via ENABLE_DEMO_AUTH=false)
     if x_demo_user:
+        if not settings.enable_demo_auth:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Demo authentication is disabled. Use Bearer token auth.",
+            )
         if x_demo_user not in VALID_DEMO_IDS:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Unknown demo user. Use one of: {', '.join(sorted(VALID_DEMO_IDS))}",
+                detail="Unknown demo user.",
             )
+        logger.debug("Authenticated user %s via demo header", x_demo_user)
         return x_demo_user
 
     # 3. No credentials
+    logger.warning("Authentication attempt with no credentials")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Missing authentication. Provide Authorization: Bearer <token> or X-Demo-User header.",

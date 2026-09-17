@@ -30,12 +30,14 @@ class User(Base):
     id = Column(String, primary_key=True)
     display_name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=True)
+    avatar = Column(String, nullable=True)
     hashed_password = Column(String, nullable=True)
     role = Column(String, nullable=False)  # student | teacher | individual_learner
     xp = Column(Integer, nullable=False, default=0)
     level = Column(Integer, nullable=False, default=1)
     streak_days = Column(Integer, nullable=False, default=0)
     last_active_date = Column(Date, nullable=True)
+    preferred_language = Column(String, nullable=True, default="en")
 
     masteries = relationship("UserMastery", back_populates="user", lazy="selectin")
     workspaces = relationship("Workspace", back_populates="owner", lazy="selectin")
@@ -113,6 +115,8 @@ class Workspace(Base):
     topics = relationship("Topic", back_populates="workspace", lazy="selectin")
     activities = relationship("Activity", back_populates="workspace", lazy="selectin")
     source_documents = relationship("SourceDocument", back_populates="workspace", lazy="selectin")
+    glossary_terms = relationship("GlossaryTerm", back_populates="workspace", lazy="selectin")
+    figures = relationship("Figure", back_populates="workspace")
 
 
 # ── Source Documents (Layer 1 Ground-Truth) ──────────────────────────────────
@@ -143,6 +147,7 @@ class SourceDocument(Base):
 
     workspace = relationship("Workspace", back_populates="source_documents")
     uploader = relationship("User")
+    figures = relationship("Figure", back_populates="source_document")
 
 
 # ── Topics (WikiPages) ─────────────────────────────────────────────────────────
@@ -159,6 +164,7 @@ class Topic(Base):
     title = Column(String, nullable=False)
     summary = Column(Text)
     embedding = Column(Vector(1024))
+    complexity_score = Column(Float, nullable=True)
 
     workspace = relationship("Workspace", back_populates="topics")
     claims = relationship("AtomicClaim", back_populates="topic", lazy="selectin")
@@ -202,10 +208,94 @@ class AtomicClaim(Base):
     flawed_snippet = Column(Text)
     rubric = Column(Text)
     embedding = Column(Vector(1024))
+    original_language = Column(String, nullable=True)
+    original_content = Column(Text, nullable=True)
+    complexity_score = Column(Float, nullable=True)
 
     topic = relationship("Topic", back_populates="claims")
     source_document = relationship("SourceDocument")
     masteries = relationship("UserMastery", back_populates="claim", lazy="selectin")
+
+
+# ── Glossary Terms ─────────────────────────────────────────────────────────────
+
+
+class GlossaryTerm(Base):
+    __tablename__ = "glossary_terms"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    source_document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    term = Column(String, nullable=False)
+    definition = Column(Text, nullable=False)
+    source_ref = Column(JSONB, nullable=True)
+    is_auto_extracted = Column(Boolean, nullable=False, default=True)
+    embedding = Column(Vector(1024))
+    original_language = Column(String, nullable=True)
+    original_definition = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    workspace = relationship("Workspace", back_populates="glossary_terms")
+    source_document = relationship("SourceDocument")
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "term", name="uq_workspace_term"),
+    )
+
+
+# ── Figures ────────────────────────────────────────────────────────────────────
+
+
+class Figure(Base):
+    __tablename__ = "figures"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    source_document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    s3_key = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)
+    page_number = Column(Integer, nullable=True)
+    caption = Column(Text, nullable=False)
+    figure_type = Column(String, nullable=False, default="unknown")
+    labels = Column(JSONB, nullable=True)
+    ocr_text = Column(Text, nullable=True)
+    embedding = Column(Vector(1024))
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    is_decorative = Column(Boolean, nullable=False, default=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    workspace = relationship("Workspace", back_populates="figures")
+    source_document = relationship("SourceDocument", back_populates="figures")
+
+
+class FigureClaim(Base):
+    __tablename__ = "figure_claims"
+
+    figure_id = Column(
+        Integer, ForeignKey("figures.id", ondelete="CASCADE"), primary_key=True
+    )
+    claim_id = Column(
+        String, ForeignKey("atomic_claims.id", ondelete="CASCADE"), primary_key=True
+    )
+    similarity_score = Column(Float, nullable=True)
 
 
 # ── User Mastery ────────────────────────────────────────────────────────────────
@@ -315,6 +405,9 @@ class ActivityAttempt(Base):
         String, ForeignKey("atomic_claims.id", ondelete="CASCADE"), nullable=True
     )
     outcome = Column(String, nullable=False)  # understood | did_not_understand | neutral
+    student_response = Column(Text, nullable=True)
+    response_image_s3_key = Column(String, nullable=True)
+    feedback = Column(Text, nullable=True)
     hints_used = Column(Boolean, nullable=False, default=False)
     difficulty = Column(Integer, nullable=False, default=1)
     xp_awarded = Column(Integer, nullable=False, default=0)
@@ -365,6 +458,7 @@ class ChatMessage(Base):
     role = Column(String, nullable=False)  # user | assistant
     content = Column(Text, nullable=False)
     sources = Column(JSONB, nullable=True)
+    image_s3_keys = Column(JSONB, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

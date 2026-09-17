@@ -3,32 +3,22 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { UserPlus, Eye, EyeOff } from "lucide-react";
+import { UserPlus, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useDemoUser } from "@/hooks/use-demo-user";
+import { authRegister } from "@/lib/api";
 
 export default function SignupPage() {
   const router = useRouter();
-  const { allUsers, signup } = useDemoUser();
+  const { loginWithToken } = useDemoUser();
   const [displayName, setDisplayName] = useState("");
-  const [userId, setUserId] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"student" | "teacher">("student");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // Auto-generate user ID from display name
-  const handleNameChange = (name: string) => {
-    setDisplayName(name);
-    if (!userId || userId.startsWith("usr_")) {
-      const slug = name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_|_$/g, "");
-      setUserId(slug ? `usr_${slug}` : "");
-    }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -36,17 +26,25 @@ export default function SignupPage() {
       setError("Please enter your display name.");
       return;
     }
-    if (!userId.trim()) {
-      setError("Please enter a user ID.");
+    if (!email.trim()) {
+      setError("Please enter your email.");
       return;
     }
-    if (allUsers[userId.trim()]) {
-      setError("That user ID is already taken. Try a different one.");
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
       return;
     }
 
-    signup(userId.trim(), displayName.trim(), role);
-    router.push("/");
+    setLoading(true);
+    try {
+      const res = await authRegister(email.trim(), password, displayName.trim(), role);
+      loginWithToken(res.access_token, res.user);
+      router.push("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -78,7 +76,7 @@ export default function SignupPage() {
               id="displayName"
               type="text"
               value={displayName}
-              onChange={(e) => handleNameChange(e.target.value)}
+              onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Sam Richards"
               className="w-full rounded-lg border bg-background px-4 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               autoFocus
@@ -87,22 +85,19 @@ export default function SignupPage() {
 
           <div>
             <label
-              htmlFor="userId"
+              htmlFor="email"
               className="mb-1.5 block text-sm font-medium"
             >
-              User ID
+              Email
             </label>
             <input
-              id="userId"
-              type="text"
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              placeholder="usr_sam_richards"
-              className="w-full rounded-lg border bg-background px-4 py-2.5 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full rounded-lg border bg-background px-4 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
-            <p className="mt-1 text-xs text-muted-foreground">
-              Used for authentication. Auto-generated from your name.
-            </p>
           </div>
 
           <div>
@@ -118,7 +113,7 @@ export default function SignupPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Any value for demo"
+                placeholder="At least 6 characters"
                 className="w-full rounded-lg border bg-background px-4 py-2.5 pr-10 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
               <button
@@ -178,10 +173,15 @@ export default function SignupPage() {
 
           <button
             type="submit"
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            disabled={loading}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
-            <UserPlus className="h-4 w-4" />
-            Create Account
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <UserPlus className="h-4 w-4" />
+            )}
+            {loading ? "Creating account..." : "Create Account"}
           </button>
         </form>
 

@@ -1,37 +1,49 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { LogIn, Eye, EyeOff } from "lucide-react";
+import { LogIn, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useDemoUser } from "@/hooks/use-demo-user";
+import { authLogin } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { allUsers, login } = useDemoUser();
-  const [userId, setUserId] = useState("");
+  const { login, loginWithToken, isLoggedIn } = useDemoUser();
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (isLoggedIn) router.replace("/");
+  }, [isLoggedIn, router]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    const trimmed = userId.trim();
-    if (!trimmed) {
-      setError("Please enter a user ID.");
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError("Please enter your email.");
+      return;
+    }
+    if (!password) {
+      setError("Please enter your password.");
       return;
     }
 
-    if (!allUsers[trimmed]) {
-      setError("User not found. Check the ID or sign up for a new account.");
-      return;
+    setLoading(true);
+    try {
+      const res = await authLogin(trimmedEmail, password);
+      loginWithToken(res.access_token, res.user);
+      router.push("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed. Please try again.");
+    } finally {
+      setLoading(false);
     }
-
-    // Demo auth — no real password check
-    login(trimmed);
-    router.push("/");
   };
 
   const handleDemoLogin = (id: string) => {
@@ -44,14 +56,14 @@ export default function LoginPage() {
       <div className="w-full max-w-md space-y-8 px-6">
         {/* Header */}
         <div className="text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">
+          <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-3xl bg-primary text-4xl font-bold text-primary-foreground">
             Ax
           </div>
-          <h1 className="mt-4 text-2xl font-bold tracking-tight">
-            Sign in to Axiom
+          <h1 className="mt-6 text-6xl font-bold tracking-tight">
+            Axiom
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Technical Learning Workspace
+          <p className="mt-3 text-base text-muted-foreground">
+            Sign in to your Technical Learning Workbench
           </p>
         </div>
 
@@ -59,17 +71,17 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label
-              htmlFor="userId"
+              htmlFor="email"
               className="mb-1.5 block text-sm font-medium"
             >
-              User ID
+              Email
             </label>
             <input
-              id="userId"
-              type="text"
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              placeholder="e.g. usr_student_demo"
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
               className="w-full rounded-lg border bg-background px-4 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               autoFocus
             />
@@ -88,7 +100,7 @@ export default function LoginPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Any value for demo"
+                placeholder="Enter your password"
                 className="w-full rounded-lg border bg-background px-4 py-2.5 pr-10 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
               <button
@@ -113,10 +125,15 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            disabled={loading}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
           >
-            <LogIn className="h-4 w-4" />
-            Sign In
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <LogIn className="h-4 w-4" />
+            )}
+            {loading ? "Signing in..." : "Sign In"}
           </button>
         </form>
 

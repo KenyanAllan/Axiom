@@ -6,13 +6,14 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
+from app.core.rate_limit import limiter
 from app.models.tables import Topic, AtomicClaim
 from app.services.bedrock import generate_embedding
 
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/api/search", tags=["search"])
 
 class SearchRequest(BaseModel):
     query: str
-    workspace_id: int | None = None
+    workspace_id: int
     limit: int = Field(default=10, ge=1, le=50)
 
 
@@ -51,7 +52,9 @@ class SearchResponse(BaseModel):
 
 
 @router.post("", response_model=SearchResponse)
+@limiter.limit("30/minute")
 async def search(
+    request: Request,
     body: SearchRequest,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -59,7 +62,14 @@ async def search(
     """Semantic search across topics and atomic claims using pgvector."""
 
     # Generate embedding (sync call wrapped in asyncio.to_thread)
-    query_embedding = await asyncio.to_thread(generate_embedding, body.query)
+    try:
+        query_embedding = await asyncio.to_thread(generate_embedding, body.query)
+    except Exception as exc:
+        logger.error("Embedding generation failed for search: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Search temporarily unavailable — embedding service error.",
+        )
 
     # ── Search topics ────────────────────────────────────────────────────────
     topic_query = (
@@ -74,8 +84,7 @@ async def search(
         .order_by("distance")
         .limit(body.limit)
     )
-    if body.workspace_id is not None:
-        topic_query = topic_query.where(Topic.workspace_id == body.workspace_id)
+    topic_query = topic_query.where(Topic.workspace_id == body.workspace_id)
 
     topic_results = await db.execute(topic_query)
     topic_rows = topic_results.all()
@@ -93,11 +102,10 @@ async def search(
         .order_by("distance")
         .limit(body.limit)
     )
-    if body.workspace_id is not None:
-        # Filter claims by workspace through the topic relationship
-        claim_query = claim_query.join(Topic, AtomicClaim.topic_id == Topic.id).where(
-            Topic.workspace_id == body.workspace_id
-        )
+    # Always filter claims by workspace
+    claim_query = claim_query.join(Topic, AtomicClaim.topic_id == Topic.id).where(
+        Topic.workspace_id == body.workspace_id
+    )
 
     claim_results = await db.execute(claim_query)
     claim_rows = claim_results.all()

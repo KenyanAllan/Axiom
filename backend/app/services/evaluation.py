@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Valid outcomes per spec section 3.1
 VALID_OUTCOMES = {"understood", "did_not_understand", "neutral"}
+VISUAL_TYPES = {"visual_sketch", "visual_label", "visual_proof"}
 
 
 def _map_bedrock_result(grading: dict) -> tuple[str, str]:
@@ -53,6 +54,7 @@ async def evaluate_student_response(
     activity_id: int | None = None,
     hints_used: bool = False,
     difficulty: int = 1,
+    response_image_s3_key: str | None = None,
 ) -> dict:
     """Run the full evaluation pipeline.
 
@@ -65,6 +67,8 @@ async def evaluate_student_response(
     7. Update user XP and level.
     8. Return full evaluation result.
     """
+    logger.info("Evaluating response: user_id=%s claim_id=%s activity_id=%s", user_id, claim_id, activity_id)
+
     # ── 1. Load the claim ────────────────────────────────────────────────────
     claim = await db.get(AtomicClaim, claim_id)
     if claim is None:
@@ -79,15 +83,16 @@ async def evaluate_student_response(
 
     outcome: str
     feedback: str
+    visual_result: dict | None = None
 
     # Deterministic grading for known activity types
-    DETERMINISTIC_TYPES = {"true_false", "multi_choice", "flashcard"}
+    DETERMINISTIC_TYPES = {"true_false", "multi_choice", "flashcard", "flashcard_deck", "fill_blank", "parsons"}
     activity_type = activity_obj.type if activity_obj is not None else None
 
     if activity_type in DETERMINISTIC_TYPES and activity_obj is not None:
         payload = activity_obj.payload or {}
 
-        if activity_type == "flashcard":
+        if activity_type in ("flashcard", "flashcard_deck"):
             # Self-graded: always understood
             outcome = "understood"
             feedback = "Flashcard reviewed. Keep reinforcing your knowledge!"
@@ -118,21 +123,97 @@ async def evaluate_student_response(
                 if correct_text:
                     feedback = f"Incorrect. The correct answer was: {correct_text}"
 
+        elif activity_type == "fill_blank":
+            correct = str(payload.get("correct_answer", "")).strip()
+            given = student_response.strip()
+            if given.lower() == correct.lower():
+                outcome = "understood"
+                feedback = f"Correct! The answer is \"{correct}\"."
+            else:
+                outcome = "did_not_understand"
+                feedback = f"Incorrect. The correct answer was \"{correct}\"."
+
+        elif activity_type == "parsons":
+            import json as _json
+            canonical = payload.get("canonicalOrder", [])
+            try:
+                given_order = _json.loads(student_response)
+            except (ValueError, TypeError):
+                given_order = []
+            if given_order == canonical:
+                outcome = "understood"
+                feedback = "Correct! You arranged the steps in the right order."
+            else:
+                outcome = "did_not_understand"
+                feedback = "Incorrect. The steps were not in the right order."
+
         else:
-            # Should not reach here, but fall back to Bedrock
             outcome = "neutral"
             feedback = ""
+
+    elif activity_type in VISUAL_TYPES and response_image_s3_key and activity_obj is not None:
+        import asyncio
+        from app.services.s3 import download_bytes
+        from app.services.visual_grading import grade_visual_response
+
+        image_bytes = await asyncio.to_thread(download_bytes, response_image_s3_key)
+        ext = response_image_s3_key.rsplit(".", 1)[-1].lower()
+        fmt_map = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}
+        image_format = fmt_map.get(ext, "jpeg")
+
+        visual_result = await asyncio.to_thread(
+            grade_visual_response,
+            image_bytes,
+            activity_obj.payload or {},
+            claim.content,
+            image_format,
+        )
+        outcome = visual_result["outcome"]  # type: ignore[assignment]
+        feedback = visual_result["feedback"]  # type: ignore[assignment]
 
     else:
         # Non-deterministic types: call Bedrock
         import asyncio
 
-        grading = await asyncio.to_thread(
-            grade_response,
-            claim_content=claim.content,
-            rubric=rubric,
-            student_response=student_response,
-        )
+        grading_rubric = rubric
+
+        if activity_type == "feynman":
+            payload = (activity_obj.payload or {}) if activity_obj else {}
+            key_points = payload.get("key_points", [])
+            points_text = "\n".join(f"- {kp}" for kp in key_points) if key_points else ""
+            grading_rubric = (
+                "Evaluate whether the student's explanation demonstrates genuine understanding "
+                "by teaching the concept clearly. Check for:\n"
+                "1. ACCURACY — the explanation must not introduce misconceptions.\n"
+                "2. COMPLETENESS — it should cover the core idea, not just restate the term.\n"
+                "3. CLARITY — a newcomer should be able to follow the explanation.\n"
+            )
+            if points_text:
+                grading_rubric += f"Key points the explanation should address:\n{points_text}\n"
+            grading_rubric += (
+                "Award 'understood' only if all three criteria are met. "
+                "Award 'neutral' if the explanation is partially correct but misses key points. "
+                "Award 'did_not_understand' if it contains errors or is too vague to teach from."
+            )
+        elif activity_type == "wrong_on_purpose":
+            grading_rubric = (
+                "The student was shown a deliberately flawed statement and asked to identify the error. "
+                "Evaluate whether the student correctly identified the flaw and explained WHY it is wrong. "
+                "Award 'understood' if they pinpoint the specific error and reasoning is sound. "
+                "Award 'neutral' if they sense something is off but can't articulate the exact flaw. "
+                "Award 'did_not_understand' if they miss the flaw or incorrectly validate the statement."
+            )
+
+        try:
+            grading = await asyncio.to_thread(
+                grade_response,
+                claim_content=claim.content,
+                rubric=grading_rubric,
+                student_response=student_response,
+            )
+        except Exception:
+            logger.error("Bedrock grading failed for claim_id=%s user_id=%s", claim_id, user_id, exc_info=True)
+            raise
         outcome, feedback = _map_bedrock_result(grading)
 
     # If hints were used, override to neutral when the student got it right
@@ -165,6 +246,9 @@ async def evaluate_student_response(
         activity_id=activity_id,
         claim_id=claim_id,
         outcome=outcome,
+        student_response=student_response,
+        response_image_s3_key=response_image_s3_key,
+        feedback=feedback,
         hints_used=hints_used,
         difficulty=difficulty,
         xp_awarded=xp_awarded,
@@ -209,7 +293,12 @@ async def evaluate_student_response(
     # Flush so response reflects latest state (commit handled by dependency)
     await db.flush()
 
-    return {
+    logger.info(
+        "Evaluation complete: user_id=%s claim_id=%s outcome=%s xp_awarded=%d new_rating=%s new_status=%s",
+        user_id, claim_id, outcome, xp_awarded, new_rating, new_status,
+    )
+
+    result = {
         "attempt_id": attempt.id,
         "claim_id": claim_id,
         "outcome": outcome,
@@ -223,4 +312,156 @@ async def evaluate_student_response(
         "streak_days": streak_days,
         "total_xp": user.xp,
         "level": user.level,
+    }
+    if visual_result is not None:
+        result["rekognition_labels"] = visual_result.get("rekognition_labels")
+        result["structural_check"] = visual_result.get("structural_check")
+    return result
+
+
+def grade_quiz_question(question: dict, response: str) -> tuple[str, str]:
+    """Grade a single quiz question deterministically.
+
+    Returns (outcome, feedback).
+    """
+    qtype = question.get("type", "")
+
+    if qtype == "true_false":
+        correct = str(question.get("correct_answer", "")).lower().strip()
+        given = response.lower().strip()
+        if given == correct:
+            return "understood", "Correct!"
+        return "did_not_understand", f"Incorrect. The answer was {correct}."
+
+    elif qtype == "multi_choice":
+        correct_index = str(question.get("correct_index", "")).strip()
+        options = question.get("options", [])
+        correct_text = ""
+        if options and correct_index.isdigit() and int(correct_index) < len(options):
+            correct_text = str(options[int(correct_index)])
+        given = response.strip()
+        if given == correct_index or (correct_text and given == correct_text):
+            return "understood", "Correct!"
+        fb = f"Incorrect. The answer was: {correct_text}" if correct_text else "Incorrect."
+        return "did_not_understand", fb
+
+    elif qtype == "fill_blank":
+        correct = str(question.get("correct_answer", "")).strip()
+        given = response.strip()
+        if given.lower() == correct.lower():
+            return "understood", f"Correct! The answer is \"{correct}\"."
+        return "did_not_understand", f"Incorrect. The answer was \"{correct}\"."
+
+    # short_answer — needs LLM, but fall back to lenient heuristic for deterministic path
+    return "neutral", ""
+
+
+async def evaluate_quiz(
+    db: AsyncSession,
+    user_id: str,
+    activity: "Activity",
+    answers: list[dict],
+) -> dict:
+    """Grade all quiz answers, update mastery per claim, return aggregate results.
+
+    Each answer is {"question_index": int, "response": str}.
+    """
+    payload = activity.payload or {}
+    questions = payload.get("questions", [])
+    question_map = {q["index"]: q for q in questions}
+
+    user = await db.get(User, user_id)
+    if user is None:
+        raise ValueError(f"User {user_id} not found")
+
+    streak_days = await update_streak(db, user)
+    difficulty = activity.difficulty
+
+    results = []
+    total_xp = 0
+    correct_count = 0
+
+    for ans in answers:
+        idx = ans["question_index"]
+        response = ans["response"]
+        question = question_map.get(idx)
+        if question is None:
+            continue
+
+        claim_id = question.get("claim_id")
+        qtype = question.get("type", "")
+
+        # Grade the question
+        if qtype == "short_answer" and claim_id:
+            # Use Bedrock for short answer
+            try:
+                claim = await db.get(AtomicClaim, claim_id)
+                if claim:
+                    import asyncio as _aio
+                    grading = await _aio.to_thread(
+                        grade_response,
+                        claim_content=claim.content,
+                        rubric=claim.rubric or "Accept any accurate, well-reasoned response.",
+                        student_response=response,
+                    )
+                    outcome, feedback = _map_bedrock_result(grading)
+                else:
+                    outcome, feedback = "neutral", "Claim not found."
+            except Exception:
+                outcome, feedback = "neutral", "Could not grade this response."
+        else:
+            outcome, feedback = grade_quiz_question(question, response)
+
+        is_correct = outcome == "understood"
+        if is_correct:
+            correct_count += 1
+
+        # Update mastery for this claim
+        if claim_id:
+            rating_delta = calculate_rating_change(difficulty, outcome, False)
+            await apply_rating_change(db, user_id, claim_id, rating_delta)
+
+        xp = calculate_xp_reward(difficulty, outcome, streak_days)
+        total_xp += xp
+
+        # Record attempt
+        attempt = ActivityAttempt(
+            user_id=user_id,
+            activity_id=activity.id,
+            claim_id=claim_id,
+            outcome=outcome,
+            student_response=response,
+            feedback=feedback,
+            hints_used=False,
+            difficulty=difficulty,
+            xp_awarded=xp,
+            rating_change=calculate_rating_change(difficulty, outcome, False),
+        )
+        db.add(attempt)
+
+        results.append({
+            "question_index": idx,
+            "claim_id": claim_id or "",
+            "type": qtype,
+            "is_correct": is_correct,
+            "feedback": feedback,
+            "xp_awarded": xp,
+        })
+
+    # Update user XP
+    user.xp = (user.xp or 0) + total_xp
+    user.level = compute_level(user.xp)
+
+    # Mark queue entry completed
+    from app.services.queue import complete_queue_entry
+    await complete_queue_entry(db, user_id, activity.id)
+
+    await db.flush()
+
+    return {
+        "activity_id": activity.id,
+        "total_questions": len(questions),
+        "correct_count": correct_count,
+        "total_xp": total_xp,
+        "results": results,
     }

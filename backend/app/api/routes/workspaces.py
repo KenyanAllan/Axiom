@@ -1,4 +1,4 @@
-"""Workspace endpoints — create, list, detail, delete."""
+"""Workbench endpoints — create, list, detail, delete."""
 
 from __future__ import annotations
 

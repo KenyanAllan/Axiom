@@ -32,8 +32,14 @@ email-validator>=2.0.0
 # Rate limiting
 slowapi==0.1.9
 
+# SSE streaming
+sse-starlette>=2.1.0
+
 # PDF parsing
 pymupdf==1.25.1
+
+# Image processing
+Pillow>=10.0.0
 
 # Utilities
 python-dotenv==1.0.1

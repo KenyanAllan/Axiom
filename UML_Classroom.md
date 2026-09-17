@@ -460,7 +460,7 @@
 * Methods
     * submitAnalysis(decision: string): EvaluationResult
 
-### Activity-AudioOverview
+### Activity-MiniPodcast
 * Attributes
     * audioUrl: string
     * transcriptText: string

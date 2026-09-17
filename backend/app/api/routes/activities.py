@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,12 +23,25 @@ from app.schemas.activities import (
     AttemptCreate,
     AttemptResult,
     ClaimCard,
+    DeckCardResponse,
+    DeckResponse,
     EvaluateRequest,
     EvaluateResult,
+    GenerateDeckRequest,
+    GenerateQuizRequest,
     QueueResponse,
+    QuizOverviewResponse,
+    QuizQuestionResponse,
+    QuizSubmitRequest,
+    QuizSubmitResponse,
+    QuizQuestionResult,
 )
-from app.services.activity_generator import generate_basic_activities
-from app.services.evaluation import evaluate_student_response
+from app.services.activity_generator import (
+    generate_basic_activities,
+    generate_flashcard_deck,
+    generate_quiz,
+)
+from app.services.evaluation import evaluate_student_response, evaluate_quiz
 from app.services.queue import get_user_queue, add_to_queue
 
 logger = logging.getLogger(__name__)
@@ -35,7 +51,7 @@ router = APIRouter(prefix="/api/activities", tags=["activities"])
 class GenerateRequest(BaseModel):
     claim_id: str
     workspace_id: int
-    types: list[str] = Field(default=["flashcard", "true_false", "multi_choice"])
+    types: list[str] = Field(default=["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof", "parsons"])
 
 
 # ── POST /api/activities/evaluate ────────────────────────────────────────────
@@ -51,12 +67,13 @@ async def evaluate(
 
     Flow:
       1. Validate claim exists.
-      2. Send claim content + rubric + student response to Claude 3.5 Sonnet
+      2. Send claim content + rubric + student response to Claude Sonnet 4.6
          via the Bedrock Converse API.
       3. If correct -> set mastery = 'mastered', award +50 XP.
       4. Log attempt to mastery history (JSONB).
       5. Return grading result with formative feedback.
     """
+    logger.info("Evaluate request: user_id=%s claim_id=%s", user_id, body.claim_id)
     try:
         result = await evaluate_student_response(
             db=db,
@@ -65,6 +82,7 @@ async def evaluate(
             student_response=body.student_response,
         )
     except ValueError as exc:
+        logger.warning("Evaluate failed: %s", exc)
         raise HTTPException(status_code=404, detail=str(exc))
 
     return EvaluateResult(
@@ -214,6 +232,7 @@ async def create_activity(
                 body.classroom_id,
             )
 
+    logger.info("Activity created: id=%s type=%s creator=%s", activity.id, activity.type, user_id)
     return ActivityResponse.model_validate(activity)
 
 
@@ -231,6 +250,7 @@ async def submit_attempt(
     Evaluates the student's response, updates mastery, awards XP,
     and returns grading feedback.
     """
+    logger.info("Submit attempt: user_id=%s activity_id=%s", user_id, body.activity_id)
     # Validate the activity exists
     activity = (
         await db.execute(select(Activity).where(Activity.id == body.activity_id))
@@ -257,12 +277,15 @@ async def submit_attempt(
             activity_id=body.activity_id,
             hints_used=body.hints_used,
             difficulty=activity.difficulty,
+            response_image_s3_key=body.response_image_s3_key,
         )
     except ValueError as exc:
+        logger.warning("Submit attempt failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
     return AttemptResult(
         attempt_id=result["attempt_id"],
+        claim_id=result["claim_id"],
         outcome=result["outcome"],
         hints_used=result["hints_used"],
         xp_awarded=result["xp_awarded"],
@@ -332,6 +355,7 @@ async def generate_activities(
     db: AsyncSession = Depends(get_db),
 ) -> list[ActivityResponse]:
     """Auto-generate deterministic activities for a claim."""
+    logger.info("Generate activities: user_id=%s claim_id=%s types=%s", user_id, body.claim_id, body.types)
     claim = await db.get(AtomicClaim, body.claim_id)
     if claim is None:
         raise HTTPException(status_code=404, detail=f"Claim '{body.claim_id}' not found")
@@ -345,6 +369,119 @@ async def generate_activities(
     )
 
     return [ActivityResponse.model_validate(a) for a in activities]
+
+
+# ── POST /api/activities/generate-deck ──────────────────────────────────────
+
+
+@router.post("/generate-deck", response_model=DeckResponse, status_code=201)
+async def generate_deck(
+    body: GenerateDeckRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DeckResponse:
+    """Generate a flashcard deck with N cards across topics."""
+    logger.info("Generate deck: user_id=%s workspace_id=%s deck_size=%s", user_id, body.workspace_id, body.deck_size)
+    try:
+        activity = await generate_flashcard_deck(
+            db=db,
+            workspace_id=body.workspace_id,
+            creator_id=user_id,
+            deck_size=body.deck_size,
+            topic_ids=body.topic_ids,
+        )
+    except ValueError as exc:
+        logger.warning("Generate deck failed: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    cards_payload = activity.payload.get("cards", [])
+    return DeckResponse(
+        activity_id=activity.id,
+        deck_size=len(cards_payload),
+        cards=[DeckCardResponse(**c) for c in cards_payload],
+    )
+
+
+# ── POST /api/activities/generate-quiz ─────────────────────────────────────
+
+
+@router.post("/generate-quiz", response_model=QuizOverviewResponse, status_code=201)
+async def generate_quiz_endpoint(
+    body: GenerateQuizRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> QuizOverviewResponse:
+    """Generate a quiz with mixed question types across topics."""
+    logger.info("Generate quiz: user_id=%s workspace_id=%s question_count=%s", user_id, body.workspace_id, body.question_count)
+    try:
+        activity = await generate_quiz(
+            db=db,
+            workspace_id=body.workspace_id,
+            creator_id=user_id,
+            question_count=body.question_count,
+            topic_ids=body.topic_ids,
+            question_types=body.question_types,
+        )
+    except ValueError as exc:
+        logger.warning("Generate quiz failed: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    questions_payload = activity.payload.get("questions", [])
+    questions = []
+    for q in questions_payload:
+        questions.append(QuizQuestionResponse(
+            index=q["index"],
+            type=q["type"],
+            claim_id=q["claim_id"],
+            prompt=q["prompt"],
+            options=q.get("options"),
+        ))
+
+    return QuizOverviewResponse(
+        activity_id=activity.id,
+        question_count=len(questions),
+        questions=questions,
+    )
+
+
+# ── POST /api/activities/quiz/{activity_id}/submit ─────────────────────────
+
+
+@router.post("/quiz/{activity_id}/submit", response_model=QuizSubmitResponse)
+async def submit_quiz(
+    activity_id: int,
+    body: QuizSubmitRequest,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> QuizSubmitResponse:
+    """Submit all quiz answers at once. Grades each question and returns aggregate results."""
+    logger.info("Submit quiz: user_id=%s activity_id=%s", user_id, activity_id)
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    if activity.type != "quiz":
+        raise HTTPException(status_code=400, detail="Activity is not a quiz")
+
+    try:
+        result = await evaluate_quiz(
+            db=db,
+            user_id=user_id,
+            activity=activity,
+            answers=[a.model_dump() for a in body.answers],
+        )
+    except ValueError as exc:
+        logger.warning("Submit quiz failed: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return QuizSubmitResponse(
+        activity_id=result["activity_id"],
+        total_questions=result["total_questions"],
+        correct_count=result["correct_count"],
+        total_xp=result["total_xp"],
+        results=[QuizQuestionResult(**r) for r in result["results"]],
+    )
 
 
 # ── GET /api/activities/flashcards/{topic_id} ────────────────────────────────
@@ -437,3 +574,122 @@ async def get_activity(
         raise HTTPException(status_code=404, detail="Activity not found")
 
     return ActivityResponse.model_validate(activity)
+
+
+# ── Visual activity image upload & submission ────────────────────────────────
+
+ALLOWED_VISUAL_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+MAX_VISUAL_IMAGE_SIZE = 3_750_000
+
+
+@router.post("/{activity_id}/upload-visual-image")
+async def upload_visual_image(
+    activity_id: int,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Upload an image for a visual activity response."""
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    ct = (file.content_type or "").lower()
+    if ct not in ALLOWED_VISUAL_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type: {ct}. Allowed: PNG, JPEG, GIF, WebP.",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_VISUAL_IMAGE_SIZE:
+        raise HTTPException(status_code=413, detail="Image exceeds 3.75 MB limit.")
+
+    ext = ct.split("/")[-1].replace("jpeg", "jpg")
+    s3_key = f"activity-responses/{user_id}/{activity_id}/{uuid4().hex}.{ext}"
+
+    from app.services.s3 import upload_bytes, generate_download_url
+
+    await asyncio.to_thread(upload_bytes, s3_key, data, ct)
+    url = generate_download_url(s3_key)
+
+    return {"s3_key": s3_key, "content_type": ct, "url": url}
+
+
+@router.post("/{activity_id}/submit-visual")
+async def submit_visual_response(
+    activity_id: int,
+    file: UploadFile = File(...),
+    text_response: str = Form(default=""),
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AttemptResult:
+    """Submit a visual (image) response for a visual activity type.
+
+    Uploads the image, runs grading, records the attempt, and returns results.
+    """
+    activity = (
+        await db.execute(select(Activity).where(Activity.id == activity_id))
+    ).scalar_one_or_none()
+    if activity is None:
+        raise HTTPException(status_code=404, detail="Activity not found")
+
+    ct = (file.content_type or "").lower()
+    if ct not in ALLOWED_VISUAL_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type: {ct}. Allowed: PNG, JPEG, GIF, WebP.",
+        )
+
+    data = await file.read()
+    if len(data) > MAX_VISUAL_IMAGE_SIZE:
+        raise HTTPException(status_code=413, detail="Image exceeds 3.75 MB limit.")
+
+    ext = ct.split("/")[-1].replace("jpeg", "jpg")
+    s3_key = f"activity-responses/{user_id}/{activity_id}/{uuid4().hex}.{ext}"
+
+    from app.services.s3 import upload_bytes
+
+    await asyncio.to_thread(upload_bytes, s3_key, data, ct)
+
+    claim_id = None
+    target_ids = activity.target_claim_ids or []
+    if target_ids:
+        claim_id = target_ids[0]
+    if claim_id is None:
+        raise HTTPException(status_code=400, detail="Activity has no target claims")
+
+    try:
+        result = await evaluate_student_response(
+            db=db,
+            user_id=user_id,
+            claim_id=claim_id,
+            student_response=text_response or "(visual response)",
+            activity_id=activity_id,
+            hints_used=False,
+            difficulty=activity.difficulty,
+            response_image_s3_key=s3_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    from app.services.s3 import generate_download_url
+
+    return AttemptResult(
+        attempt_id=result["attempt_id"],
+        claim_id=result["claim_id"],
+        outcome=result["outcome"],
+        hints_used=result["hints_used"],
+        xp_awarded=result["xp_awarded"],
+        rating_change=result["rating_change"],
+        new_rating=result["new_rating"],
+        feedback=result["feedback"],
+        total_xp=result["total_xp"],
+        level=result["level"],
+        streak_days=result["streak_days"],
+        response_image_url=generate_download_url(s3_key),
+        rekognition_labels=result.get("rekognition_labels"),
+        structural_check=result.get("structural_check"),
+    )

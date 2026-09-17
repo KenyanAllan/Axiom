@@ -75,12 +75,13 @@ This document breaks down every AWS service in our lean MVP architecture. It exp
   * **Synthetic Question Generation:** Pre-generates realistic user questions for every claim to improve search accuracy.
   * **Interactive Activities & Grading:** Powers "Wrong on Purpose" roleplay, grades student explanations, and evaluates code submissions against claim rubrics.
 
-#### 6. Amazon SQS (Simple Queue Service - Message Buffer)
+#### 6. Amazon SQS / Celery + Redis (Task Queue & Message Buffer)
 * **What it is in plain English:** A durable, waiting line (buffer) for tasks. One part of your system drops a message into the line, and another part picks it up when it's ready.
 * **What it does for us:**
   * Prevents our server from crashing when multiple users upload heavy documents at once.
   * Buffers multi-minute background jobs: OCR parsing, media transcription, vector generation, and cascading claim deletions.
   * Prevents our app from getting throttled by Bedrock API rate limits by pacing how fast workers send extraction requests.
+  * *(Implementation Note: For the MVP, task queueing is powered by Celery backed by Redis via `REDIS_URL` on EC2 or ElastiCache, matching docker-compose).*
 
 #### 7. Amazon Transcribe (Speech-to-Text)
 * **What it is in plain English:** An automated speech recognition engine that converts spoken audio and video into text.
@@ -91,7 +92,7 @@ This document breaks down every AWS service in our lean MVP architecture. It exp
 #### 8. Amazon Polly (Text-to-Speech)
 * **What it is in plain English:** A speech synthesis engine that turns written text into lifelike spoken audio.
 * **What it does for us:**
-  * Generates **Audio Overviews** of wiki pages (NotebookLM-style audio summaries).
+  * Generates **Mini Podcasts** of wiki pages (NotebookLM-style audio summaries).
   * Generates "Speech Marks" (metadata showing the exact millisecond each word is spoken), allowing our frontend UI to highlight text on screen in sync with the audio.
 
 ---

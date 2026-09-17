@@ -1,0 +1,628 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Axiom Learning Platform — complete AWS infrastructure.
+  Creates VPC, RDS PostgreSQL 16 (pgvector), optional ElastiCache Redis,
+  S3 buckets, EC2 with IAM role (Bedrock/S3/Transcribe/Polly/Textract/Rekognition/Translate/Comprehend),
+  Elastic IP, and networking.
+
+  PREREQUISITES:
+    1. An EC2 key pair in your target region (create in EC2 console > Key Pairs)
+    2. Bedrock model access: request Claude Sonnet 4.6 + Titan Embeddings v2
+       in the Bedrock console > Model access BEFORE deploying
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: 'Project' }
+        Parameters: [ProjectName]
+      - Label: { default: 'Compute' }
+        Parameters: [KeyPairName, InstanceType, SSHAllowedCIDR]
+      - Label: { default: 'Database' }
+        Parameters: [DBMasterUsername, DBMasterPassword, DBInstanceClass]
+      - Label: { default: 'Application' }
+        Parameters: [JWTSecretKey, CORSOrigins, GitRepositoryURL, GitBranch]
+      - Label: { default: 'Storage' }
+        Parameters: [CreateS3Buckets, ExistingSourceDocsBucketName, ExistingTranscriptionsBucketName, ExistingAudioBucketName, ExistingTextractBucketName]
+      - Label: { default: 'Optional Services' }
+        Parameters: [IncludeElastiCache]
+    ParameterLabels:
+      ProjectName: { default: 'Project name prefix' }
+      KeyPairName: { default: 'EC2 Key Pair' }
+      InstanceType: { default: 'EC2 instance type' }
+      SSHAllowedCIDR: { default: 'SSH allowed IP range' }
+      DBMasterUsername: { default: 'Database admin username' }
+      DBMasterPassword: { default: 'Database admin password' }
+      DBInstanceClass: { default: 'RDS instance type' }
+      JWTSecretKey: { default: 'JWT signing secret' }
+      CORSOrigins: { default: 'Allowed CORS origins' }
+      GitRepositoryURL: { default: 'GitHub repository URL' }
+      GitBranch: { default: 'Git branch to deploy' }
+      CreateS3Buckets: { default: 'Create new S3 buckets?' }
+      ExistingSourceDocsBucketName: { default: 'Existing Source Docs bucket name' }
+      ExistingTranscriptionsBucketName: { default: 'Existing Transcriptions bucket name' }
+      ExistingAudioBucketName: { default: 'Existing Audio bucket name' }
+      ExistingTextractBucketName: { default: 'Existing Textract bucket name' }
+      IncludeElastiCache: { default: 'Deploy ElastiCache Redis?' }
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: axiom
+    AllowedPattern: '[a-z][a-z0-9-]*'
+    MaxLength: 20
+    Description: Lowercase prefix for all resource names.
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair for SSH access.
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+    Description: t3.medium (2 vCPU, 4 GB) recommended for FastAPI + Celery.
+
+  SSHAllowedCIDR:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3}\.){3}\d{1,3}/\d{1,2}'
+    Description: CIDR for SSH access. Use your IP for security.
+
+  DBMasterUsername:
+    Type: String
+    Default: axiom_admin
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]*'
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 128
+    Description: Min 8 chars. Avoid special characters (used directly in connection URLs).
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedValues: [db.t4g.micro, db.t4g.small, db.t4g.medium, db.t4g.large]
+    Description: db.t4g.micro is cheapest. db.t4g.small recommended for demo.
+
+  JWTSecretKey:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    MaxLength: 128
+    Description: 'Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+
+  CORSOrigins:
+    Type: String
+    Default: '*'
+    Description: Comma-separated origins. Update to your Amplify URL after frontend deploy.
+
+  GitRepositoryURL:
+    Type: String
+    Default: 'https://github.com/KenyanAllan/Axiom.git'
+    Description: GitHub repository URL to clone and deploy.
+
+  GitBranch:
+    Type: String
+    Default: 'main'
+    Description: Git branch to clone and deploy.
+
+  CreateS3Buckets:
+    Type: String
+    Default: 'No'
+    AllowedValues: ['Yes', 'No']
+    Description: 'No = Use existing pre-created S3 buckets. Yes = Provision new S3 buckets in CloudFormation.'
+
+  ExistingSourceDocsBucketName:
+    Type: String
+    Default: 'axiom-source-documents'
+    Description: Name of existing S3 bucket for source documents (used when CreateS3Buckets is No).
+
+  ExistingTranscriptionsBucketName:
+    Type: String
+    Default: 'axiom-transcriptions'
+    Description: Name of existing S3 bucket for Transcribe output (used when CreateS3Buckets is No).
+
+  ExistingAudioBucketName:
+    Type: String
+    Default: 'axiom-audio'
+    Description: Name of existing S3 bucket for Polly audio output (used when CreateS3Buckets is No).
+
+  ExistingTextractBucketName:
+    Type: String
+    Default: 'axiom-textract-results'
+    Description: Name of existing S3 bucket for Textract OCR output (used when CreateS3Buckets is No).
+
+  IncludeElastiCache:
+    Type: String
+    Default: 'No'
+    AllowedValues: ['Yes', 'No']
+    Description: 'No = Redis runs locally on EC2 via Docker (simpler, cheaper for demo).'
+
+Conditions:
+  CreateElastiCache: !Equals [!Ref IncludeElastiCache, 'Yes']
+  CreateBuckets: !Equals [!Ref CreateS3Buckets, 'Yes']
+
+Resources:
+
+  # ── VPC & Networking ──────────────────────────────────────────────────────
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-igw'
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-2'
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-1'
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-2'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-rt'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # ── Security Groups ───────────────────────────────────────────────────────
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectName} backend EC2'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP (Certbot ACME challenge)
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+          Description: FastAPI Backend API (Direct Access)
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHAllowedCIDR
+          Description: SSH
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ec2-sg'
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectName} RDS PostgreSQL'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: PostgreSQL from EC2 only
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-rds-sg'
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateElastiCache
+    Properties:
+      GroupDescription: !Sub '${ProjectName} ElastiCache Redis'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: Redis from EC2 only
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-redis-sg'
+
+  # ── IAM Role + Instance Profile ───────────────────────────────────────────
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonTextractFullAccess
+        - arn:aws:iam::aws:policy/AmazonRekognitionReadOnlyAccess
+        - arn:aws:iam::aws:policy/TranslateFullAccess
+        - arn:aws:iam::aws:policy/ComprehendReadOnly
+      Policies:
+        - PolicyName: TranscribeAndPollyAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - transcribe:*
+                  - polly:*
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ec2-role'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  # ── RDS PostgreSQL 16 ──────────────────────────────────────────────────────
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub '${ProjectName} RDS subnets'
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-rds-subnets'
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub '${ProjectName}-db-1'
+      Engine: postgres
+      EngineVersion: '16.4'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 20
+      MaxAllocatedStorage: 100
+      StorageType: gp3
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      DBName: axiom
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      StorageEncrypted: true
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-rds'
+
+  # ── ElastiCache Redis ─────────────────────────────────────────────────────
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Condition: CreateElastiCache
+    Properties:
+      Description: !Sub '${ProjectName} Redis subnets'
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Condition: CreateElastiCache
+    Properties:
+      ClusterName: !Sub '${ProjectName}-redis'
+      Engine: redis
+      CacheNodeType: cache.t3.micro
+      NumCacheNodes: 1
+      SecurityGroupIds:
+        - !GetAtt RedisSecurityGroup.GroupId
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-redis'
+
+  # ── S3 Buckets (Optional Creation) ────────────────────────────────────────
+
+  SourceDocsBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateBuckets
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-source-docs-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  TranscriptionsBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateBuckets
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-transcriptions-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  AudioBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateBuckets
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-audio-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  TextractBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateBuckets
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-textract-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ── EC2 Instance + Elastic IP ─────────────────────────────────────────────
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    DependsOn: IGWAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-eip'
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: RDSInstance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-backend'
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash -xe
+              exec > /var/log/axiom-setup.log 2>&1
+
+              echo "=== Axiom EC2 bootstrap starting ==="
+              dnf update -y
+              dnf install -y docker git python3-pip
+
+              systemctl enable docker
+              systemctl start docker
+              usermod -aG docker ec2-user
+
+              mkdir -p /usr/local/lib/docker/cli-plugins
+              curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+                -o /usr/local/lib/docker/cli-plugins/docker-compose
+              chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+              ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+
+              pip3 install certbot || true
+
+              cd /home/ec2-user
+              if [ ! -d /home/ec2-user/app/.git ]; then
+                rm -rf /home/ec2-user/app
+                git clone -b ${GitBranchName} ${GitRepoURL} /home/ec2-user/app || true
+              else
+                cd /home/ec2-user/app && git fetch origin && git checkout ${GitBranchName} && git pull origin ${GitBranchName} || true
+              fi
+
+              mkdir -p /home/ec2-user/app/backend
+              cat > /home/ec2-user/app/backend/.env << 'ENVEOF'
+              DATABASE_URL=postgresql+asyncpg://${DBUser}:${DBPass}@${DBEndpoint}:5432/axiom
+              SYNC_DATABASE_URL=postgresql+psycopg2://${DBUser}:${DBPass}@${DBEndpoint}:5432/axiom
+              DATABASE_SSL=true
+
+              REDIS_URL=${RedisURL}
+
+              AWS_DEFAULT_REGION=${Region}
+              AWS_ACCESS_KEY_ID=
+              AWS_SECRET_ACCESS_KEY=
+
+              BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-6
+              BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
+
+              S3_BUCKET_NAME=${SourceBucket}
+              S3_PRESIGNED_URL_EXPIRY=3600
+              TRANSCRIBE_OUTPUT_BUCKET=${TranscribeBucket}
+              TEXTRACT_OUTPUT_BUCKET=${TextractBucketName}
+              POLLY_OUTPUT_BUCKET=${AudioBucketName}
+              POLLY_VOICE_ID=Matthew
+              POLLY_ENGINE=neural
+
+              TRANSLATE_TERMINOLOGY_NAME=axiom-stem-terms
+              COMPREHEND_LANGUAGE_CODE=en
+
+              JWT_SECRET_KEY=${JWTKey}
+              JWT_ALGORITHM=HS256
+              JWT_EXPIRE_MINUTES=1440
+
+              ENVIRONMENT=production
+              LOG_LEVEL=info
+              CORS_ORIGINS=${CORSValue}
+              UPLOAD_MAX_BYTES=52428800
+
+              ENABLE_DEMO_AUTH=true
+              RUN_SEED_ON_STARTUP=true
+              ENVEOF
+
+              chown -R ec2-user:ec2-user /home/ec2-user/app
+
+              if [ -f /home/ec2-user/app/backend/scripts/deploy_ec2.sh ]; then
+                chmod +x /home/ec2-user/app/backend/scripts/deploy_ec2.sh
+                /home/ec2-user/app/backend/scripts/deploy_ec2.sh ${GitRepoURL} ${GitBranchName} || true
+              fi
+
+              echo "=== Axiom EC2 bootstrap complete ==="
+            - DBUser: !Ref DBMasterUsername
+              DBPass: !Ref DBMasterPassword
+              DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
+              RedisURL: !If [CreateElastiCache, !Sub 'redis://${RedisCluster.RedisEndpoint.Address}:6379/0', 'redis://localhost:6379/0']
+              Region: !Ref AWS::Region
+              JWTKey: !Ref JWTSecretKey
+              CORSValue: !Ref CORSOrigins
+              SourceBucket: !If [CreateBuckets, !Ref SourceDocsBucket, !Ref ExistingSourceDocsBucketName]
+              TranscribeBucket: !If [CreateBuckets, !Ref TranscriptionsBucket, !Ref ExistingTranscriptionsBucketName]
+              TextractBucketName: !If [CreateBuckets, !Ref TextractBucket, !Ref ExistingTextractBucketName]
+              AudioBucketName: !If [CreateBuckets, !Ref AudioBucket, !Ref ExistingAudioBucketName]
+              GitRepoURL: !Ref GitRepositoryURL
+              GitBranchName: !Ref GitBranch
+
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      InstanceId: !Ref EC2Instance
+
+# ── Outputs ───────────────────────────────────────────────────────────────
+
+Outputs:
+  EC2PublicIP:
+    Description: Elastic IP for the backend instance
+    Value: !Ref ElasticIP
+
+  SSHCommand:
+    Description: SSH into the backend instance
+    Value: !Sub 'ssh -i <your-key>.pem ec2-user@${ElasticIP}'
+
+  BackendURL:
+    Description: Backend URL (after Certbot SSL setup)
+    Value: !Sub 'https://${ElasticIP}.sslip.io'
+
+  RDSEndpoint:
+    Description: RDS PostgreSQL endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  RedisEndpoint:
+    Condition: CreateElastiCache
+    Description: 'ElastiCache Redis endpoint'
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address
+
+  SourceDocsBucketName:
+    Description: S3 bucket for source documents
+    Value: !If [CreateBuckets, !Ref SourceDocsBucket, !Ref ExistingSourceDocsBucketName]
+
+  TranscriptionsBucketName:
+    Description: S3 bucket for Transcribe output
+    Value: !If [CreateBuckets, !Ref TranscriptionsBucket, !Ref ExistingTranscriptionsBucketName]
+
+  AudioBucketName:
+    Description: S3 bucket for Polly audio output
+    Value: !If [CreateBuckets, !Ref AudioBucket, !Ref ExistingAudioBucketName]
+
+  TextractBucketName:
+    Description: S3 bucket for Textract OCR output
+    Value: !If [CreateBuckets, !Ref TextractBucket, !Ref ExistingTextractBucketName]

@@ -1,21 +1,34 @@
 "use client";
 
+import { useState } from "react";
 import {
   Plus,
   LayoutList,
   MessageSquare,
+  BookA,
   BookText,
   FileText,
-  Settings,
   BarChart3,
+  GitBranch,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ImageIcon,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import type { WikiPage, ChatSession } from "@/components/layout/CenterStage";
 import type { UserRole, ViewTab } from "@/lib/types";
 
 interface NavPanelProps {
   activeTab: ViewTab;
   onTabChange: (tab: ViewTab) => void;
   userRole: UserRole;
+  wikiPages: WikiPage[];
+  onWikiSelect: (id: string) => void;
+  sessions?: ChatSession[];
+  activeSessionId?: string | null;
+  onSessionSelect?: (id: string) => void;
+  onDeleteSession?: (id: string) => void;
+  onCreateNewChat?: () => void;
 }
 
 interface NavItem {
@@ -28,65 +41,150 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { key: "new_chat", label: "New Chat", icon: <Plus className="h-4 w-4" /> },
   { key: "activity", label: "Activity Feed", icon: <LayoutList className="h-4 w-4" /> },
-  { key: "chat", label: "Chat History", icon: <MessageSquare className="h-4 w-4" /> },
-  { key: "wiki", label: "Wiki", icon: <BookText className="h-4 w-4" /> },
+{ key: "wiki", label: "Wiki", icon: <BookText className="h-4 w-4" /> },
+  { key: "nodemap", label: "Node Map", icon: <GitBranch className="h-4 w-4" /> },
   { key: "sources", label: "Source Docs", icon: <FileText className="h-4 w-4" /> },
+  { key: "figures", label: "Figures", icon: <ImageIcon className="h-4 w-4" /> },
+  { key: "glossary", label: "Glossary", icon: <BookA className="h-4 w-4" /> },
   { key: "dashboard", label: "Dashboard", icon: <BarChart3 className="h-4 w-4" />, teacherOnly: true },
+  { key: "class-chats", label: "Class Chats", icon: <MessageSquare className="h-4 w-4" />, teacherOnly: true },
 ];
 
-export function NavPanel({ activeTab, onTabChange, userRole }: NavPanelProps) {
+export function NavPanel({ activeTab, onTabChange, userRole, wikiPages, onWikiSelect, sessions, activeSessionId, onSessionSelect, onDeleteSession, onCreateNewChat }: NavPanelProps) {
+  const [collapsed, setCollapsed] = useState(false);
+
   const visibleItems = NAV_ITEMS.filter(
     (item) => !item.teacherOnly || userRole === "teacher"
   );
 
   return (
-    <aside className="flex w-[220px] shrink-0 flex-col border-r bg-background">
+    <aside
+      className={`flex shrink-0 flex-col border-r bg-background transition-all duration-200 ${
+        collapsed ? "w-[52px]" : "w-[220px]"
+      }`}
+    >
       {/* Nav links */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
+      <nav className={`py-4 space-y-0.5 ${collapsed ? "px-1.5" : "px-3"}`}>
         {visibleItems.map((item, i) => {
           const isActive = item.key !== "new_chat" && item.key === activeTab;
           return (
             <button
               key={`${item.key}-${i}`}
               onClick={() => {
-                if (item.key !== "new_chat") onTabChange(item.key);
+                if (item.key === "new_chat") {
+                  onCreateNewChat?.();
+                } else {
+                  onTabChange(item.key);
+                }
               }}
-              className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors ${
+              className={`flex w-full items-center rounded-md transition-colors ${
+                collapsed
+                  ? "justify-center px-0 py-2"
+                  : "gap-2.5 px-2 py-1.5"
+              } text-sm ${
                 isActive
                   ? "bg-primary/5 font-medium text-foreground"
                   : "text-muted-foreground hover:bg-accent hover:text-foreground"
               }`}
+              title={collapsed ? item.label : undefined}
             >
               {item.icon}
-              <span>{item.label}</span>
+              {!collapsed && <span>{item.label}</span>}
             </button>
           );
         })}
       </nav>
 
-      <Separator />
-
-      {/* Active track */}
-      <div className="px-4 py-3">
-        <p className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-          Active Track
-        </p>
-        <div className="flex items-center gap-2 text-sm">
-          <span className="h-2 w-2 rounded-full bg-primary" />
-          <span className="truncate">Applied Linear Alge...</span>
-          <span className="ml-auto font-mono text-xs text-muted-foreground">
-            8/12
-          </span>
-        </div>
+      {/* Collapse toggle — at bottom of nav section */}
+      <div className={`flex items-center border-t ${collapsed ? "justify-center px-0" : "justify-end px-3"} py-1.5`}>
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title={collapsed ? "Expand panel" : "Collapse panel"}
+        >
+          {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+        </button>
       </div>
 
+      {/* Spacer pushes conversations + wikis to bottom */}
+      <div className="flex-1" />
+
+      {/* Conversations + Active Wikis — pinned to bottom */}
+      <div className="overflow-y-auto">
+
+      {/* Conversations */}
+      {!collapsed && sessions && sessions.length > 0 ? (
+        <div className="px-4 py-3">
+          <p className="mb-2 font-mono text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+            Conversations
+          </p>
+          <div className="max-h-[280px] space-y-0.5 overflow-y-auto">
+            {sessions.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => {
+                  onSessionSelect?.(s.id);
+                  onTabChange("chat");
+                }}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm transition-colors hover:bg-accent hover:text-foreground ${
+                  activeSessionId === s.id
+                    ? "bg-primary/5 font-medium text-foreground"
+                    : "text-muted-foreground"
+                }`}
+              >
+                <MessageSquare className="h-3 w-3 shrink-0" />
+                <span className="min-w-0 truncate">{s.title}</span>
+                <span className="ml-auto shrink-0 font-mono text-[10px]">
+                  {s.messages.length}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : collapsed && sessions && sessions.length > 0 ? (
+        <div className="flex flex-col items-center gap-1 py-3" title={`${sessions.length} conversations`}>
+          <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="font-mono text-[9px] text-muted-foreground">{sessions.length}</span>
+        </div>
+      ) : null}
+
       <Separator />
 
-      {/* Settings */}
-      <button className="flex items-center gap-2.5 px-5 py-3 text-sm text-muted-foreground transition-colors hover:text-foreground">
-        <Settings className="h-4 w-4" />
-        <span>Settings</span>
-      </button>
+      {/* Active wikis */}
+      {!collapsed ? (
+        <div className="px-4 py-3">
+          <p className="mb-2 font-mono text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+            Active Wikis
+          </p>
+          <div className="space-y-0.5">
+            {wikiPages.slice(0, 4).map((wp) => (
+              <button
+                key={wp.id}
+                onClick={() => onWikiSelect(wp.id)}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />
+                <span className="min-w-0 truncate">{wp.title}</span>
+                <span className="ml-auto shrink-0 font-mono text-[10px]">
+                  {wp.claims.length}
+                </span>
+              </button>
+            ))}
+            {wikiPages.length > 4 && (
+              <p className="px-2 font-mono text-[10px] text-muted-foreground">
+                +{wikiPages.length - 4} more
+              </p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-1 py-3" title={`${wikiPages.length} active wikis`}>
+          <BookText className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="font-mono text-[9px] text-muted-foreground">{wikiPages.length}</span>
+        </div>
+      )}
+
+      </div>
     </aside>
   );
 }

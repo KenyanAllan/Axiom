@@ -12,13 +12,23 @@ from pydantic import BaseModel, Field
 
 ActivityType = Literal[
     "flashcard",
+    "flashcard_deck",
     "multi_choice",
     "true_false",
     "short_answer",
+    "fill_blank",
     "wrong_on_purpose",
     "scenario",
     "feynman",
-    "audio_overview",
+    "mini_podcast",
+    "quiz",
+    "visual_sketch",
+    "visual_label",
+    "visual_proof",
+    "parsons",
+    "figure_flashcard",
+    "figure_label",
+    "figure_explain",
 ]
 
 ActivityScope = Literal["CLASSROOM_SHARED", "STUDENT_PERSONAL"]
@@ -56,11 +66,11 @@ class AttemptCreate(BaseModel):
     claim_id: str | None = None
     hints_used: bool = False
     student_response: str = Field(
-        ...,
-        min_length=1,
+        default="",
         max_length=10_000,
         description="The student's answer text.",
     )
+    response_image_s3_key: str | None = None
 
 
 # ── Response schemas ────────────────────────────────────────────────────────────
@@ -98,6 +108,7 @@ class ActivityResponse(BaseModel):
 
 class AttemptResult(BaseModel):
     attempt_id: int
+    claim_id: str
     outcome: Outcome
     hints_used: bool
     xp_awarded: int
@@ -107,6 +118,9 @@ class AttemptResult(BaseModel):
     total_xp: int
     level: int
     streak_days: int
+    response_image_url: str | None = None
+    rekognition_labels: list[dict] | None = None
+    structural_check: bool | None = None
 
 
 class QueueEntryResponse(BaseModel):
@@ -192,6 +206,14 @@ class UserProfile(BaseModel):
     streak_days: int = 0
     last_active_date: date | None = None
     email: str | None = None
+    avatar: str | None = None
+    preferred_language: str | None = "en"
+
+
+class UserProfileUpdate(BaseModel):
+    email: str | None = None
+    avatar: str | None = None
+    preferred_language: str | None = None
 
 
 class MasteryEntry(BaseModel):
@@ -207,5 +229,88 @@ class HistoryEvent(BaseModel):
     claim_id: str
     claim_title: str
     is_correct: bool
+    outcome: str
+    student_response: str | None = None
+    feedback: str | None = None
     xp_awarded: int
     timestamp: datetime
+
+
+# ── Flashcard deck schemas ─────────────────────────────────────────────────────
+
+QuizQuestionType = Literal["multi_choice", "true_false", "fill_blank", "short_answer"]
+
+
+class GenerateDeckRequest(BaseModel):
+    workspace_id: int
+    deck_size: Literal[5, 10, 15] = 10
+    topic_ids: list[str] | None = Field(
+        None, description="Specific topics to draw from. If empty, picks across all topics."
+    )
+
+
+class DeckCardResponse(BaseModel):
+    index: int
+    claim_id: str
+    front: str
+    back: str
+
+
+class DeckResponse(BaseModel):
+    activity_id: int
+    deck_size: int
+    cards: list[DeckCardResponse]
+
+
+# ── Quiz schemas ───────────────────────────────────────────────────────────────
+
+
+class GenerateQuizRequest(BaseModel):
+    workspace_id: int
+    question_count: int = Field(5, ge=1, le=10)
+    topic_ids: list[str] | None = Field(
+        None, description="Specific topics. If empty, picks across all topics."
+    )
+    question_types: list[QuizQuestionType] | None = Field(
+        None, description="Allowed question types. If empty, uses all types."
+    )
+
+
+class QuizQuestionResponse(BaseModel):
+    index: int
+    type: QuizQuestionType
+    claim_id: str
+    prompt: str
+    options: list[str] | None = None
+
+
+class QuizOverviewResponse(BaseModel):
+    activity_id: int
+    question_count: int
+    questions: list[QuizQuestionResponse]
+
+
+class QuizAnswerItem(BaseModel):
+    question_index: int
+    response: str
+
+
+class QuizSubmitRequest(BaseModel):
+    answers: list[QuizAnswerItem]
+
+
+class QuizQuestionResult(BaseModel):
+    question_index: int
+    claim_id: str
+    type: QuizQuestionType
+    is_correct: bool
+    feedback: str
+    xp_awarded: int
+
+
+class QuizSubmitResponse(BaseModel):
+    activity_id: int
+    total_questions: int
+    correct_count: int
+    total_xp: int
+    results: list[QuizQuestionResult]
