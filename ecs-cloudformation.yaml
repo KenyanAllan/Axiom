@@ -1,41 +1,33 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Axiom Learning Platform — AWS ECS Fargate infrastructure.
-  Provisions ECS Cluster, Fargate Task Definition, ALB (Load Balancer), Target Group,
-  ECR Repository, IAM Task & Execution Roles, and CloudWatch Logs.
+  Axiom Learning Platform — AWS ECS Fargate self-contained infrastructure.
+  Creates VPC, Subnets, Internet Gateway, ALB, ECR Repository, ECS Cluster,
+  Fargate Task Definition, ECS Service, IAM Roles, and CloudWatch Log Group.
 
 Parameters:
   ProjectName:
     Type: String
     Default: axiom
-    Description: Project name prefix.
-
-  VPCId:
-    Type: AWS::EC2::VPC::Id
-    Description: VPC ID where ECS tasks and ALB will run.
-
-  SubnetIds:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: Public Subnet IDs for ALB and ECS tasks.
+    Description: Lowercase prefix for all resource names.
 
   DatabaseURL:
     Type: String
-    NoEcho: true
+    Default: 'postgresql+asyncpg://axiom:axiom_dev_secret@localhost:5432/axiom'
     Description: Aurora / RDS PostgreSQL connection URL (postgresql+asyncpg://...).
 
   SyncDatabaseURL:
     Type: String
-    NoEcho: true
+    Default: 'postgresql+psycopg2://axiom:axiom_dev_secret@localhost:5432/axiom'
     Description: Synchronous PostgreSQL connection URL for migrations (postgresql+psycopg2://...).
 
   RedisURL:
     Type: String
     Default: 'redis://localhost:6379/0'
-    Description: Redis URL for Celery worker task broker.
+    Description: Redis URL for Celery task broker.
 
   JWTSecretKey:
     Type: String
-    NoEcho: true
+    Default: 'CHANGE-ME-to-a-random-64-char-string-for-axiom-production'
     Description: Random 64-character JWT secret key.
 
   CORSOrigins:
@@ -44,6 +36,80 @@ Parameters:
     Description: Comma-separated CORS allowed origins.
 
 Resources:
+
+  # ── VPC & Networking ──────────────────────────────────────────────────────
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ecs-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ecs-igw'
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ecs-public-1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ecs-public-2'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ecs-public-rt'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
 
   # ── ECR Repository ────────────────────────────────────────────────────────
   ECRRepository:
@@ -65,7 +131,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: !Sub '${ProjectName} ALB security group'
-      VpcId: !Ref VPCId
+      VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
@@ -80,7 +146,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: !Sub '${ProjectName} ECS Task security group'
-      VpcId: !Ref VPCId
+      VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 8000
@@ -141,7 +207,9 @@ Resources:
     Properties:
       Name: !Sub '${ProjectName}-alb'
       Scheme: internet-facing
-      Subnets: !Ref SubnetIds
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
       SecurityGroups:
         - !Ref ALBSecurityGroup
 
@@ -151,7 +219,7 @@ Resources:
       Name: !Sub '${ProjectName}-tg'
       Port: 8000
       Protocol: HTTP
-      VpcId: !Ref VPCId
+      VpcId: !Ref VPC
       TargetType: ip
       HealthCheckPath: /health
       HealthCheckIntervalSeconds: 15
@@ -242,7 +310,9 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: ENABLED
-          Subnets: !Ref SubnetIds
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
           SecurityGroups:
             - !Ref ECSTaskSecurityGroup
       LoadBalancers:
