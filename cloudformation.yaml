@@ -1,0 +1,594 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Axiom Learning Platform — complete AWS infrastructure.
+  Creates VPC, Aurora Serverless v2 (PostgreSQL 16 + pgvector), optional ElastiCache Redis,
+  S3 buckets, EC2 with IAM role (Bedrock/S3/Transcribe/Polly), Elastic IP, and networking.
+
+  PREREQUISITES (cannot be automated via CloudFormation):
+    1. An EC2 key pair in your target region (create in EC2 console > Key Pairs)
+    2. Bedrock model access: request Claude 3.5 Sonnet + Titan Embeddings v2
+       in the Bedrock console > Model access BEFORE deploying
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: 'Project' }
+        Parameters: [ProjectName]
+      - Label: { default: 'Compute' }
+        Parameters: [KeyPairName, InstanceType, SSHAllowedCIDR]
+      - Label: { default: 'Database' }
+        Parameters: [DBMasterUsername, DBMasterPassword, AuroraMinACU, AuroraMaxACU]
+      - Label: { default: 'Application' }
+        Parameters: [JWTSecretKey, CORSOrigins]
+      - Label: { default: 'Optional Services' }
+        Parameters: [IncludeElastiCache]
+    ParameterLabels:
+      ProjectName: { default: 'Project name prefix' }
+      KeyPairName: { default: 'EC2 Key Pair' }
+      InstanceType: { default: 'EC2 instance type' }
+      SSHAllowedCIDR: { default: 'SSH allowed IP range' }
+      DBMasterUsername: { default: 'Database admin username' }
+      DBMasterPassword: { default: 'Database admin password' }
+      AuroraMinACU: { default: 'Aurora min capacity (ACU)' }
+      AuroraMaxACU: { default: 'Aurora max capacity (ACU)' }
+      JWTSecretKey: { default: 'JWT signing secret' }
+      CORSOrigins: { default: 'Allowed CORS origins' }
+      IncludeElastiCache: { default: 'Deploy ElastiCache Redis?' }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Parameters
+# ══════════════════════════════════════════════════════════════════════════════
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Default: axiom
+    AllowedPattern: '[a-z][a-z0-9-]*'
+    MaxLength: 20
+    Description: Lowercase prefix for all resource names.
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair for SSH access.
+
+  InstanceType:
+    Type: String
+    Default: t3.medium
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+    Description: t3.medium (2 vCPU, 4 GB) recommended for FastAPI + Celery.
+
+  SSHAllowedCIDR:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3}\.){3}\d{1,3}/\d{1,2}'
+    Description: CIDR for SSH access. Use your IP (e.g. 203.0.113.50/32) for security.
+
+  DBMasterUsername:
+    Type: String
+    Default: axiom_admin
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]*'
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 128
+    Description: Min 8 chars. Avoid special characters (used directly in connection URLs).
+
+  AuroraMinACU:
+    Type: Number
+    Default: 0.5
+    Description: 0.5 ACU is the cheapest option (~$44/mo).
+
+  AuroraMaxACU:
+    Type: Number
+    Default: 2
+    Description: Max burst capacity. 2 ACU is sufficient for demo load.
+
+  JWTSecretKey:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    MaxLength: 128
+    Description: 'Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+
+  CORSOrigins:
+    Type: String
+    Default: '*'
+    Description: Comma-separated origins. Update to your Amplify URL after frontend deploy.
+
+  IncludeElastiCache:
+    Type: String
+    Default: 'No'
+    AllowedValues: ['Yes', 'No']
+    Description: 'No = Redis runs locally on EC2 via Docker (simpler, cheaper for demo).'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Conditions
+# ══════════════════════════════════════════════════════════════════════════════
+
+Conditions:
+  CreateElastiCache: !Equals [!Ref IncludeElastiCache, 'Yes']
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Resources
+# ══════════════════════════════════════════════════════════════════════════════
+
+Resources:
+
+  # ── VPC & Networking ──────────────────────────────────────────────────────
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-igw'
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-2'
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-1'
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-2'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-rt'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # ── Security Groups ───────────────────────────────────────────────────────
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectName} backend EC2'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP (Certbot ACME challenge)
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHAllowedCIDR
+          Description: SSH
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ec2-sg'
+
+  AuroraSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectName} Aurora PostgreSQL'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: PostgreSQL from EC2 only
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-aurora-sg'
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateElastiCache
+    Properties:
+      GroupDescription: !Sub '${ProjectName} ElastiCache Redis'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          Description: Redis from EC2 only
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-redis-sg'
+
+  # ── IAM Role + Instance Profile ───────────────────────────────────────────
+
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-ec2-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonTranscribeFullAccess
+        - arn:aws:iam::aws:policy/AmazonPollyFullAccess
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ec2-role'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${ProjectName}-ec2-profile'
+      Roles:
+        - !Ref EC2Role
+
+  # ── Aurora Serverless v2 (PostgreSQL 16) ──────────────────────────────────
+  # After deploy, connect and run: CREATE EXTENSION IF NOT EXISTS vector;
+
+  AuroraSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub '${ProjectName} Aurora subnets'
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-aurora-subnets'
+
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Delete
+    Properties:
+      DBClusterIdentifier: !Sub '${ProjectName}-cluster'
+      Engine: aurora-postgresql
+      EngineVersion: '16.4'
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: !Ref AuroraMinACU
+        MaxCapacity: !Ref AuroraMaxACU
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      DatabaseName: axiom
+      DBSubnetGroupName: !Ref AuroraSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref AuroraSecurityGroup
+      StorageEncrypted: true
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-aurora'
+
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub '${ProjectName}-db-1'
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-aurora-instance'
+
+  # ── ElastiCache Redis (conditional — only when IncludeElastiCache = Yes) ──
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Condition: CreateElastiCache
+    Properties:
+      Description: !Sub '${ProjectName} Redis subnets'
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Condition: CreateElastiCache
+    Properties:
+      ClusterName: !Sub '${ProjectName}-redis'
+      Engine: redis
+      CacheNodeType: cache.t3.micro
+      NumCacheNodes: 1
+      VpcSecurityGroupIds:
+        - !GetAtt RedisSecurityGroup.GroupId
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-redis'
+
+  # ── S3 Buckets (all block public access) ──────────────────────────────────
+
+  SourceDocsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-source-docs-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  TranscriptionsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-transcriptions-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  AudioBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-audio-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ── EC2 Instance + Elastic IP ─────────────────────────────────────────────
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    DependsOn: IGWAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-eip'
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: AuroraInstance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-backend'
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash -xe
+              exec > /var/log/axiom-setup.log 2>&1
+
+              echo "=== Axiom EC2 bootstrap starting ==="
+
+              # ── System packages ──────────────────────────────────
+              dnf update -y
+              dnf install -y docker git
+
+              # ── Docker ───────────────────────────────────────────
+              systemctl enable docker
+              systemctl start docker
+              usermod -aG docker ec2-user
+
+              # ── Docker Compose ───────────────────────────────────
+              mkdir -p /usr/local/lib/docker/cli-plugins
+              curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+                -o /usr/local/lib/docker/cli-plugins/docker-compose
+              chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+              ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+
+              # ── Certbot ──────────────────────────────────────────
+              pip3 install certbot || true
+
+              # ── Pre-generate .env ────────────────────────────────
+              mkdir -p /home/ec2-user/app/backend
+              cat > /home/ec2-user/app/backend/.env << 'ENVEOF'
+              # ── Database ──────────────────────────────────────────────
+              DATABASE_URL=postgresql+asyncpg://${DBUser}:${DBPass}@${DBEndpoint}:5432/axiom
+              SYNC_DATABASE_URL=postgresql+psycopg2://${DBUser}:${DBPass}@${DBEndpoint}:5432/axiom
+              DATABASE_SSL=true
+
+              # ── Redis ─────────────────────────────────────────────────
+              # Using local Docker Redis. If you deployed ElastiCache, update
+              # this with the endpoint from the CloudFormation Outputs tab.
+              REDIS_URL=redis://localhost:6379/0
+
+              # ── AWS (IAM role handles credentials — leave blank) ──────
+              AWS_DEFAULT_REGION=${Region}
+              AWS_ACCESS_KEY_ID=
+              AWS_SECRET_ACCESS_KEY=
+
+              # ── Bedrock ───────────────────────────────────────────────
+              BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+              BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
+
+              # ── S3 Buckets ────────────────────────────────────────────
+              S3_BUCKET_NAME=${SourceBucket}
+              S3_PRESIGNED_URL_EXPIRY=3600
+              TRANSCRIBE_OUTPUT_BUCKET=${TranscribeBucket}
+              POLLY_OUTPUT_BUCKET=${AudioBucketName}
+              POLLY_VOICE_ID=Matthew
+              POLLY_ENGINE=neural
+
+              # ── JWT ───────────────────────────────────────────────────
+              JWT_SECRET_KEY=${JWTKey}
+              JWT_ALGORITHM=HS256
+              JWT_EXPIRE_MINUTES=1440
+
+              # ── App / Security ────────────────────────────────────────
+              ENVIRONMENT=production
+              LOG_LEVEL=info
+              CORS_ORIGINS=${CORSValue}
+              UPLOAD_MAX_BYTES=52428800
+
+              # ── Demo Auth (disabled for production) ───────────────────
+              ENABLE_DEMO_AUTH=false
+              RUN_SEED_ON_STARTUP=false
+              ENVEOF
+
+              chown -R ec2-user:ec2-user /home/ec2-user/app
+
+              echo "=== Axiom EC2 bootstrap complete ==="
+              echo "Next: SSH in, clone your repo into /home/ec2-user/app, copy .env into backend/, and run docker-compose up"
+            - DBUser: !Ref DBMasterUsername
+              DBPass: !Ref DBMasterPassword
+              DBEndpoint: !GetAtt AuroraCluster.Endpoint.Address
+              Region: !Ref AWS::Region
+              JWTKey: !Ref JWTSecretKey
+              CORSValue: !Ref CORSOrigins
+              SourceBucket: !Ref SourceDocsBucket
+              TranscribeBucket: !Ref TranscriptionsBucket
+              AudioBucketName: !Ref AudioBucket
+
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      InstanceId: !Ref EC2Instance
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Outputs
+# ══════════════════════════════════════════════════════════════════════════════
+
+Outputs:
+
+  EC2PublicIP:
+    Description: Elastic IP for the backend instance
+    Value: !Ref ElasticIP
+
+  SSHCommand:
+    Description: SSH into the backend instance
+    Value: !Sub 'ssh -i <your-key>.pem ec2-user@${ElasticIP}'
+
+  BackendURL:
+    Description: Backend URL (after Certbot SSL setup)
+    Value: !Sub 'https://${ElasticIP}.sslip.io'
+
+  AuroraEndpoint:
+    Description: Aurora PostgreSQL cluster endpoint
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+
+  RedisEndpoint:
+    Condition: CreateElastiCache
+    Description: 'ElastiCache Redis endpoint — update REDIS_URL in .env to: redis://<this-value>:6379/0'
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address
+
+  SourceDocsBucketName:
+    Description: S3 bucket for source documents
+    Value: !Ref SourceDocsBucket
+
+  TranscriptionsBucketName:
+    Description: S3 bucket for Transcribe output
+    Value: !Ref TranscriptionsBucket
+
+  AudioBucketName:
+    Description: S3 bucket for Polly audio output
+    Value: !Ref AudioBucket
+
+  PostDeploySteps:
+    Description: Steps to complete after stack creation
+    Value: !Sub >-
+      POST-DEPLOY CHECKLIST:
+      (1) Request Bedrock model access in ${AWS::Region} if not already done (Claude 3.5 Sonnet + Titan Embeddings v2).
+      (2) SSH in: ssh -i <key>.pem ec2-user@${ElasticIP}
+      (3) Clone repo: cd /home/ec2-user/app && git clone <your-repo-url> .
+      (4) The .env is pre-generated at /home/ec2-user/app/backend/.env with all values filled in.
+      (5) Enable pgvector on Aurora — from EC2 install psql and run:
+          sudo dnf install -y postgresql16 &&
+          psql "host=${AuroraCluster.Endpoint.Address} dbname=axiom user=${DBMasterUsername} sslmode=require"
+          then: CREATE EXTENSION IF NOT EXISTS vector;
+      (6) Run Alembic migrations: cd backend && alembic upgrade head
+      (7) Optional first-time seed: RUN_SEED_ON_STARTUP=true python -m scripts.seed
+      (8) Start services: docker-compose up -d
+      (9) Setup SSL: sudo certbot certonly --standalone -d ${ElasticIP}.sslip.io
+      (10) Deploy frontend on AWS Amplify with NEXT_PUBLIC_API_URL=https://${ElasticIP}.sslip.io
+      (11) Update CORS_ORIGINS in .env to your Amplify URL, then restart: docker-compose restart
