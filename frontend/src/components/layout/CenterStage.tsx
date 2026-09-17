@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   MessageSquare,
   BookText,
@@ -47,6 +47,7 @@ import {
   createClaim as apiCreateClaim,
   updateClaim as apiUpdateClaim,
   deleteClaim as apiDeleteClaim,
+  synthesizeSpeech,
 } from "@/lib/api";
 import { SettingsPage, parseAvatar } from "@/components/settings/SettingsPage";
 
@@ -415,6 +416,83 @@ function computeNodeLayout(topics: GraphTopic[], edges: GraphEdge[]): DemoNode[]
       deps: depMap.get(t.topic_id) ?? [],
     };
   });
+}
+
+const NODE_W = 140;
+const NODE_H = 44;
+const NODE_RX = NODE_H / 2;
+
+function simulateForces(nodes: DemoNode[], iterations = 150): DemoNode[] {
+  const sim = nodes.map((n, i) => ({
+    ...n,
+    x: n.x + ((((i * 7 + 13) * 2654435761) >>> 0) % 60 - 30),
+    y: n.y + ((((i * 11 + 37) * 2654435761) >>> 0) % 60 - 30),
+    vx: 0,
+    vy: 0,
+  }));
+
+  const cx = sim.reduce((s, n) => s + n.x, 0) / sim.length + NODE_W / 2;
+  const cy = sim.reduce((s, n) => s + n.y, 0) / sim.length + NODE_H / 2;
+
+  for (let i = 0; i < iterations; i++) {
+    const alpha = 1 - i / iterations;
+
+    for (let a = 0; a < sim.length; a++) {
+      for (let b = a + 1; b < sim.length; b++) {
+        const dx = sim[b].x - sim[a].x;
+        const dy = sim[b].y - sim[a].y;
+        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+        const force = 8000 / (dist * dist);
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        sim[a].vx -= fx;
+        sim[a].vy -= fy;
+        sim[b].vx += fx;
+        sim[b].vy += fy;
+      }
+    }
+
+    for (const node of sim) {
+      for (const depId of node.deps) {
+        const dep = sim.find((n) => n.id === depId);
+        if (!dep) continue;
+        const dx = dep.x - node.x;
+        const dy = dep.y - node.y;
+        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+        const force = (dist - 200) * 0.05;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        node.vx += fx;
+        node.vy += fy;
+        dep.vx -= fx;
+        dep.vy -= fy;
+      }
+    }
+
+    for (const node of sim) {
+      node.vx += (cx - node.x) * 0.01;
+      node.vy += (cy - node.y) * 0.01;
+    }
+
+    for (const node of sim) {
+      node.vx *= 0.8;
+      node.vy *= 0.8;
+      node.x += node.vx * alpha;
+      node.y += node.vy * alpha;
+    }
+  }
+
+  const PAD = 60;
+  const minX = Math.min(...sim.map((n) => n.x));
+  const minY = Math.min(...sim.map((n) => n.y));
+  const shiftX = PAD - minX;
+  const shiftY = PAD - minY;
+  for (const node of sim) {
+    node.x += shiftX;
+    node.y += shiftY;
+  }
+
+  return sim.map(({ vx, vy, ...rest }) => rest);
 }
 
 // ── Chat seed data ────────────────────────────────────────────────────────────
@@ -903,7 +981,7 @@ export function CenterStage({
                 </div>
               ) : (
                 messages.map((msg) => (
-                  <ChatBubble key={msg.id} message={msg} onTabChange={onTabChange} userAvatar={userProfile.avatar} />
+                  <ChatBubble key={msg.id} message={msg} onTabChange={onTabChange} userAvatar={userProfile.avatar} userId={userId} />
                 ))
               )}
               {isTyping && (
@@ -937,7 +1015,7 @@ export function CenterStage({
           />
         </TabsContent>
 
-        <TabsContent value="nodemap" className="flex-1 overflow-y-auto">
+        <TabsContent value="nodemap" className="flex flex-1 flex-col overflow-hidden">
           <DemoNodeMapTab nodes={graphNodes} onNodeClick={handleNodeClick} />
         </TabsContent>
 
@@ -1087,8 +1165,18 @@ export function CenterStage({
 
 // ── Chat Bubble ───────────────────────────────────────────────────────────────
 
-function ChatBubble({ message, onTabChange, userAvatar }: { message: ChatMessage; onTabChange?: (tab: ViewTab) => void; userAvatar?: string }) {
+function ChatBubble({ message, onTabChange, userAvatar, userId }: { message: ChatMessage; onTabChange?: (tab: ViewTab) => void; userAvatar?: string; userId: string }) {
   const [copied, setCopied] = useState(false);
+  const chatAudioRef = useRef<HTMLAudioElement | null>(null);
+  const isSpeakingRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (chatAudioRef.current) { chatAudioRef.current.pause(); chatAudioRef.current = null; }
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      isSpeakingRef.current = false;
+    };
+  }, []);
 
   const handleCopy = async () => {
     try {
@@ -1100,10 +1188,26 @@ function ChatBubble({ message, onTabChange, userAvatar }: { message: ChatMessage
     }
   };
 
-  const handleReadAloud = () => {
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(message.text);
-    window.speechSynthesis.speak(utterance);
+  const handleReadAloud = async () => {
+    if (chatAudioRef.current) { chatAudioRef.current.pause(); chatAudioRef.current = null; }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    if (isSpeakingRef.current) { isSpeakingRef.current = false; return; }
+    isSpeakingRef.current = true;
+    try {
+      const { audio_url } = await synthesizeSpeech(userId, message.text);
+      if (!isSpeakingRef.current) return;
+      const audio = new Audio(audio_url);
+      audio.onended = () => { chatAudioRef.current = null; isSpeakingRef.current = false; };
+      chatAudioRef.current = audio;
+      audio.play();
+    } catch {
+      if (!isSpeakingRef.current) return;
+      if ("speechSynthesis" in window) {
+        const utterance = new SpeechSynthesisUtterance(message.text);
+        window.speechSynthesis.speak(utterance);
+      }
+      isSpeakingRef.current = false;
+    }
   };
 
   const isUser = message.role === "user";
@@ -1255,23 +1359,52 @@ function DemoWikiTab({
   const [editClaimId, setEditClaimId] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
 
-  const handleReadAloud = () => {
+  const pollyAudioRef = useRef<HTMLAudioElement | null>(null);
+  const readCancelledRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (pollyAudioRef.current) { pollyAudioRef.current.pause(); pollyAudioRef.current = null; }
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      readCancelledRef.current = true;
+    };
+  }, []);
+
+  const handleReadAloud = async () => {
     if (isReading) {
-      window.speechSynthesis.cancel();
+      readCancelledRef.current = true;
+      if (pollyAudioRef.current) { pollyAudioRef.current.pause(); pollyAudioRef.current = null; }
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
       setIsReading(false);
       return;
     }
-    if (!page || !("speechSynthesis" in window)) return;
+    if (!page) return;
     const claimsText = page.claims
       .map((c, i) => `Claim ${i + 1}: ${c.title}. ${c.description}`)
       .join(". ");
     const fullText = `${page.title}. ${page.snippet}. ${claimsText}`;
-    const utter = new SpeechSynthesisUtterance(fullText);
-    utter.rate = 0.95;
-    utter.onend = () => setIsReading(false);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utter);
+    readCancelledRef.current = false;
     setIsReading(true);
+    try {
+      const { audio_url } = await synthesizeSpeech(userId, fullText);
+      if (readCancelledRef.current) return;
+      const audio = new Audio(audio_url);
+      audio.playbackRate = 0.95;
+      audio.onended = () => { setIsReading(false); pollyAudioRef.current = null; };
+      pollyAudioRef.current = audio;
+      audio.play();
+    } catch {
+      if (readCancelledRef.current) return;
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(fullText);
+        utter.rate = 0.95;
+        utter.onend = () => setIsReading(false);
+        window.speechSynthesis.speak(utter);
+      } else {
+        setIsReading(false);
+      }
+    }
   };
 
   // Form fields
@@ -1824,11 +1957,12 @@ interface DemoNodeMapTabProps {
 }
 
 function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
-  const displayNodes = nodes ?? DEMO_NODES;
+  const rawNodes = nodes ?? DEMO_NODES;
+  const displayNodes = useMemo(() => simulateForces(rawNodes), [rawNodes]);
   const [hovered, setHovered] = useState<string | null>(null);
 
-  const svgW = Math.max(850, ...displayNodes.map((n) => n.x + 180));
-  const svgH = Math.max(380, ...displayNodes.map((n) => n.y + 80));
+  const svgW = Math.max(850, Math.max(...displayNodes.map((n) => n.x + NODE_W)) + 40);
+  const svgH = Math.max(380, Math.max(...displayNodes.map((n) => n.y + NODE_H)) + 40);
 
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -1997,7 +2131,7 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
   });
 
   return (
-    <div className="px-6 py-5">
+    <div className="flex h-full flex-col px-6 py-5">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold">Knowledge Node Map</h2>
@@ -2018,10 +2152,44 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
           </button>
         </div>
       </div>
+      <div className="mt-3 mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <Circle className="h-3 w-3 fill-emerald-500 text-emerald-500" />
+          Mastered
+        </span>
+        <span className="flex items-center gap-1.5">
+          <Circle className="h-3 w-3 fill-blue-500 text-blue-500" />
+          In Progress
+        </span>
+        <span className="flex items-center gap-1.5">
+          <Circle className="h-3 w-3 fill-gray-500 text-gray-500" />
+          Not Started
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 bg-amber-500" />
+          Prerequisite
+        </span>
+        <span className="flex items-center gap-1">
+          <Circle className="h-2.5 w-2.5 fill-green-500 text-green-500" />
+          Easy
+        </span>
+        <span className="flex items-center gap-1">
+          <Circle className="h-2.5 w-2.5 fill-yellow-500 text-yellow-500" />
+          Med
+        </span>
+        <span className="flex items-center gap-1">
+          <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />
+          Hard
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-slate-300" />
+          Related
+        </span>
+      </div>
       <div
         ref={containerRef}
-        className="mt-5 overflow-hidden rounded-xl border bg-card"
-        style={{ height: Math.max(400, svgH), cursor: isDragging ? "grabbing" : "grab" }}
+        className="flex-1 min-h-0 overflow-hidden rounded-xl border bg-card"
+        style={{ minHeight: 400, cursor: isDragging ? "grabbing" : "grab" }}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -2056,10 +2224,10 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
               return (
                 <line
                   key={edgeKey}
-                  x1={dep.x + 70}
-                  y1={dep.y + 22}
+                  x1={dep.x + NODE_W / 2}
+                  y1={dep.y + NODE_H / 2}
                   x2={node.x}
-                  y2={node.y + 22}
+                  y2={node.y + NODE_H / 2}
                   stroke={isPrereq ? "#f59e0b" : "#cbd5e1"}
                   strokeWidth={isPrereq ? 2.5 : 2}
                   strokeDasharray={isPrereq ? undefined : "6 3"}
@@ -2080,12 +2248,17 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
                 onClick={() => onNodeClick(node.id)}
                 className="cursor-pointer"
               >
+                <defs>
+                  <clipPath id={`pill-${node.id}`}>
+                    <rect x={node.x} y={node.y} width={NODE_W} height={NODE_H} rx={NODE_RX} />
+                  </clipPath>
+                </defs>
                 <rect
                   x={node.x}
                   y={node.y}
-                  width={140}
-                  height={44}
-                  rx={8}
+                  width={NODE_W}
+                  height={NODE_H}
+                  rx={NODE_RX}
                   fill={colors.fill}
                   stroke={isHovered ? "#2563eb" : colors.stroke}
                   strokeWidth={isHovered ? 2.5 : 1.5}
@@ -2094,16 +2267,16 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
                   <rect
                     x={node.x}
                     y={node.y}
-                    width={140 * (node.mastery / 100)}
-                    height={44}
-                    rx={8}
+                    width={NODE_W * (node.mastery / 100)}
+                    height={NODE_H}
                     fill={colors.fill}
                     opacity={0.3}
+                    clipPath={`url(#pill-${node.id})`}
                   />
                 )}
                 <text
-                  x={node.x + 70}
-                  y={node.y + 24}
+                  x={node.x + NODE_W / 2}
+                  y={node.y + NODE_H / 2 + 2}
                   textAnchor="middle"
                   dominantBaseline="middle"
                   fontSize="12"
@@ -2115,7 +2288,7 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
                 </text>
                 {node.mastery > 0 && (
                   <text
-                    x={node.x + 130}
+                    x={node.x + NODE_W - 10}
                     y={node.y + 12}
                     textAnchor="middle"
                     fontSize="9"
@@ -2141,40 +2314,6 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
             );
           })}
         </svg>
-      </div>
-      <div className="mt-3 flex items-center gap-5 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
-          <Circle className="h-3 w-3 fill-emerald-500 text-emerald-500" />
-          Mastered
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Circle className="h-3 w-3 fill-blue-500 text-blue-500" />
-          In Progress
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Circle className="h-3 w-3 fill-gray-500 text-gray-500" />
-          Not Started
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-0.5 w-4 bg-amber-500" />
-          Prerequisite
-        </span>
-        <span className="flex items-center gap-1">
-          <Circle className="h-2.5 w-2.5 fill-green-500 text-green-500" />
-          Easy
-        </span>
-        <span className="flex items-center gap-1">
-          <Circle className="h-2.5 w-2.5 fill-yellow-500 text-yellow-500" />
-          Med
-        </span>
-        <span className="flex items-center gap-1">
-          <Circle className="h-2.5 w-2.5 fill-red-500 text-red-500" />
-          Hard
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-slate-300" />
-          Related
-        </span>
       </div>
     </div>
   );

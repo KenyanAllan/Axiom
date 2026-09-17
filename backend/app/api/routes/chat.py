@@ -113,9 +113,10 @@ WHEN TO USE TOOLS:
 GUIDELINES:
 - Before creating activities, use list_topics or get_topic_claims to find the \
 correct claim_id — do NOT guess claim IDs
-- create_activities_for_claim generates six types: flashcard, true_false, \
-multi_choice, fill_blank, wrong_on_purpose, and feynman. You can specify \
-which types to create, or omit to create all six
+- create_activities_for_claim generates these types: flashcard, true_false, \
+multi_choice, fill_blank, wrong_on_purpose, feynman, visual_sketch, \
+visual_label, visual_proof, and parsons. You can specify which types to \
+create, or omit to create all of them
 - Use get_learning_frontier to advise what to study next
 - Use get_mastery_status to check progress before making recommendations
 - You may chain multiple tool calls to fulfill a request (e.g., list_topics → \

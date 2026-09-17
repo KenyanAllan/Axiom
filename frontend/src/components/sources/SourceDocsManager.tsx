@@ -17,13 +17,15 @@ import {
   Video,
   Image as ImageIcon,
 } from "lucide-react";
-import type { SourceDocument, UserRole } from "@/lib/types";
+import type { Figure, SourceDocument, UserRole } from "@/lib/types";
 import {
   listSourceDocs,
   uploadSourceDoc,
   deleteSourceDoc,
   getSourceViewUrl,
+  listFiguresBySource,
 } from "@/lib/api";
+import FigureGallery from "@/components/figures/FigureGallery";
 import dynamic from "next/dynamic";
 import { usePresignedUrlCache } from "@/hooks/usePresignedUrlCache";
 
@@ -465,6 +467,7 @@ function DocumentViewer({
   const [viewUrl, setViewUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string | null>(null);
+  const [figures, setFigures] = useState<Figure[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isDemo, setIsDemo] = useState(false);
@@ -511,6 +514,12 @@ function DocumentViewer({
           if (!res.ok) throw new Error(`Failed to fetch content: ${res.status}`);
           const text = await res.text();
           if (!cancelled) setTextContent(text);
+        }
+        try {
+          const figs = await listFiguresBySource(userId, doc.id);
+          if (!cancelled) setFigures(figs);
+        } catch {
+          // figures are optional — don't block the viewer
         }
       } catch (err) {
         if (!cancelled) {
@@ -670,6 +679,20 @@ function DocumentViewer({
           </a>
         </div>
       ) : null}
+
+      {/* Extracted figures */}
+      {figures.length > 0 && (
+        <div className="rounded-lg border bg-card">
+          <div className="border-b px-4 py-2">
+            <span className="text-xs font-medium text-muted-foreground">
+              Extracted Figures ({figures.length})
+            </span>
+          </div>
+          <div className="p-4">
+            <FigureGallery figures={figures} userId={userId} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

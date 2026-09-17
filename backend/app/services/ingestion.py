@@ -29,6 +29,11 @@ MAX_CHUNK_TOKENS = 1200
 OVERLAP_TOKENS = 100
 MIN_CHARS_PER_PAGE_THRESHOLD = 50
 
+MIN_FIGURE_WIDTH = 100
+MIN_FIGURE_HEIGHT = 100
+MIN_FIGURE_BYTES = 2000
+FIGURE_CLAIM_SIMILARITY_THRESHOLD = 0.75
+
 
 # ── PDF parsing ──────────────────────────────────────────────────────────────
 
@@ -498,6 +503,247 @@ def download_from_s3(s3_key: str) -> bytes:
     return response["Body"].read()
 
 
+# ── Figure extraction ──────────────────────────────────────────────────────
+
+
+FIGURE_CAPTION_PROMPT = """\
+You are a figure analysis engine for an educational platform.
+
+Given an image extracted from an educational document, analyze it and return a JSON object with:
+- "caption": A concise, informative caption (1-2 sentences) describing what the figure shows and its educational significance.
+- "figure_type": One of: "diagram", "chart", "graph", "table", "equation", "photo", "illustration", "flowchart", "map", "screenshot", "unknown"
+- "is_decorative": true if this is a logo, icon, page decoration, watermark, or other non-educational image; false otherwise.
+
+Return ONLY the JSON object. No markdown fences.
+"""
+
+
+def extract_figures_from_pdf(
+    pdf_bytes: bytes, source_doc_id: int, workspace_id: int,
+) -> list[dict]:
+    """Extract embedded images from a PDF using PyMuPDF.
+
+    Filters out small/decorative images by dimension and byte-size thresholds.
+    Uploads each figure to S3 and returns metadata dicts.
+    """
+    import fitz
+    from app.services.s3 import upload_bytes
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    figures: list[dict] = []
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        image_list = page.get_images(full=True)
+
+        for img_idx, img_info in enumerate(image_list):
+            xref = img_info[0]
+            try:
+                img_data = doc.extract_image(xref)
+            except Exception:
+                continue
+
+            image_bytes = img_data["image"]
+            width = img_data.get("width", 0)
+            height = img_data.get("height", 0)
+            ext = img_data.get("ext", "png")
+
+            if width < MIN_FIGURE_WIDTH or height < MIN_FIGURE_HEIGHT:
+                continue
+            if len(image_bytes) < MIN_FIGURE_BYTES:
+                continue
+
+            ct_map = {"png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg",
+                      "gif": "image/gif", "webp": "image/webp", "tiff": "image/tiff"}
+            content_type = ct_map.get(ext, f"image/{ext}")
+
+            s3_key = f"figures/{workspace_id}/{source_doc_id}/p{page_num + 1}_{img_idx}.{ext}"
+            try:
+                upload_bytes(s3_key, image_bytes, content_type)
+            except Exception as exc:
+                logger.warning("Failed to upload figure to S3 (%s): %s", s3_key, exc)
+                continue
+
+            figures.append({
+                "s3_key": s3_key,
+                "content_type": content_type,
+                "page_number": page_num + 1,
+                "width": width,
+                "height": height,
+                "size_bytes": len(image_bytes),
+                "image_bytes": image_bytes,
+            })
+
+    doc.close()
+    logger.info("Extracted %d figure candidates from PDF (source_doc %s)", len(figures), source_doc_id)
+    return figures
+
+
+def extract_figure_from_image_upload(
+    file_bytes: bytes, content_type: str, source_doc_id: int, workspace_id: int,
+) -> list[dict]:
+    """Treat a standalone image upload as a single figure."""
+    from app.services.s3 import upload_bytes
+
+    ext_map = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+               "image/webp": "webp", "image/tiff": "tiff", "image/bmp": "bmp"}
+    ext = ext_map.get(content_type, "png")
+
+    width, height = None, None
+    try:
+        from PIL import Image as PILImage
+        import io
+        img = PILImage.open(io.BytesIO(file_bytes))
+        width, height = img.size
+    except Exception:
+        pass
+
+    s3_key = f"figures/{workspace_id}/{source_doc_id}/full.{ext}"
+    upload_bytes(s3_key, file_bytes, content_type)
+
+    return [{
+        "s3_key": s3_key,
+        "content_type": content_type,
+        "page_number": None,
+        "width": width,
+        "height": height,
+        "size_bytes": len(file_bytes),
+        "image_bytes": file_bytes,
+    }]
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+def _call_bedrock_caption_figure(image_bytes: bytes, content_type: str) -> dict:
+    """Send an image to Bedrock Claude for captioning and classification."""
+    kwargs: dict[str, Any] = {"region_name": settings.aws_default_region}
+    if settings.aws_access_key_id:
+        kwargs["aws_access_key_id"] = settings.aws_access_key_id
+        kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+    client = boto3.client("bedrock-runtime", **kwargs)
+
+    fmt_map = {"image/jpeg": "jpeg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+    fmt = fmt_map.get(content_type, "jpeg")
+
+    response = client.converse(
+        modelId=settings.bedrock_model_id,
+        system=[{"text": FIGURE_CAPTION_PROMPT}],
+        messages=[{
+            "role": "user",
+            "content": [
+                {"image": {"format": fmt, "source": {"bytes": image_bytes}}},
+                {"text": "Analyze this figure from an educational document."},
+            ],
+        }],
+        inferenceConfig={"maxTokens": 1024, "temperature": 0.1},
+    )
+
+    raw = response["output"]["message"]["content"][0]["text"]
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return {"caption": raw[:200], "figure_type": "unknown", "is_decorative": False}
+
+
+def _analyze_and_store_figure(
+    db: Any,
+    fig_data: dict,
+    workspace_id: int,
+    source_doc_id: int,
+) -> None:
+    """Analyze a single extracted figure and store it in the database."""
+    from app.models.tables import Figure, FigureClaim
+    from app.services.rekognition import detect_image_labels, detect_image_text
+
+    image_bytes = fig_data["image_bytes"]
+
+    labels = []
+    ocr_text = ""
+    try:
+        labels = detect_image_labels(image_bytes)
+    except Exception as exc:
+        logger.warning("Rekognition labels failed for figure %s: %s", fig_data["s3_key"], exc)
+    try:
+        ocr_text = detect_image_text(image_bytes)
+    except Exception as exc:
+        logger.warning("Rekognition text failed for figure %s: %s", fig_data["s3_key"], exc)
+
+    try:
+        caption_result = _call_bedrock_caption_figure(image_bytes, fig_data["content_type"])
+    except Exception as exc:
+        logger.warning("Figure captioning failed for %s: %s", fig_data["s3_key"], exc)
+        caption_result = {"caption": "Extracted figure", "figure_type": "unknown", "is_decorative": False}
+
+    caption = caption_result.get("caption", "Extracted figure")
+    figure_type = caption_result.get("figure_type", "unknown")
+    is_decorative = caption_result.get("is_decorative", False)
+
+    embedding = None
+    if not is_decorative:
+        try:
+            embedding = _call_bedrock_embed(caption)
+        except Exception as exc:
+            logger.warning("Figure embedding failed for %s: %s", fig_data["s3_key"], exc)
+
+    figure = Figure(
+        workspace_id=workspace_id,
+        source_document_id=source_doc_id,
+        s3_key=fig_data["s3_key"],
+        content_type=fig_data["content_type"],
+        page_number=fig_data.get("page_number"),
+        caption=caption,
+        figure_type=figure_type,
+        labels=labels if labels else None,
+        ocr_text=ocr_text if ocr_text else None,
+        embedding=embedding,
+        width=fig_data.get("width"),
+        height=fig_data.get("height"),
+        size_bytes=fig_data.get("size_bytes"),
+        is_decorative=is_decorative,
+    )
+    db.add(figure)
+    db.flush()
+
+    if not is_decorative and embedding is not None:
+        _associate_figure_with_claims(db, figure.id, embedding, workspace_id)
+
+
+def _associate_figure_with_claims(
+    db: Any,
+    figure_id: int,
+    figure_embedding: list[float],
+    workspace_id: int,
+) -> None:
+    """Link a figure to semantically related claims via cosine similarity."""
+    from sqlalchemy import text as sa_text
+    from app.models.tables import FigureClaim
+
+    result = db.execute(
+        sa_text("""
+            SELECT ac.id, (ac.embedding <=> :emb::vector) as distance
+            FROM atomic_claims ac
+            JOIN source_documents sd ON ac.source_document_id = sd.id
+            WHERE sd.workspace_id = :ws_id
+              AND ac.embedding IS NOT NULL
+            ORDER BY ac.embedding <=> :emb::vector
+            LIMIT 5
+        """),
+        {"emb": str(figure_embedding), "ws_id": workspace_id},
+    )
+
+    for row in result.fetchall():
+        similarity = 1.0 - row.distance
+        if similarity >= FIGURE_CLAIM_SIMILARITY_THRESHOLD:
+            fc = FigureClaim(
+                figure_id=figure_id,
+                claim_id=row.id,
+                similarity_score=round(similarity, 4),
+            )
+            db.add(fc)
+
+
 # ── Full pipeline (sync, runs in Celery worker) ─────────────────────────────
 
 
@@ -530,7 +776,7 @@ def ingest_source_document(
     engine = create_engine(settings.sync_database_url, pool_pre_ping=True)
     Session = sessionmaker(bind=engine)
 
-    stats: dict = {"chunks": 0, "topics_created": 0, "topics_merged": 0, "claims_inserted": 0, "glossary_terms_inserted": 0, "errors": 0, "avg_complexity": None}
+    stats: dict = {"chunks": 0, "topics_created": 0, "topics_merged": 0, "claims_inserted": 0, "glossary_terms_inserted": 0, "figures_extracted": 0, "errors": 0, "avg_complexity": None}
 
     # ── 1. Download ──────────────────────────────────────────────────────────
     logger.info("Downloading source doc %s from S3: %s", source_doc_id, s3_key)
@@ -649,6 +895,20 @@ def ingest_source_document(
             stats["source_language"] = source_language
     except Exception as exc:
         logger.warning("Language detection/translation failed: %s — proceeding in original language", exc)
+
+    # ── 2c. Extract figures from PDFs and images ────────────────────────────
+    figures_extracted: list[dict] = []
+    try:
+        if content_type == "application/pdf" or filename.lower().endswith(".pdf"):
+            figures_extracted = extract_figures_from_pdf(file_bytes, source_doc_id, workspace_id)
+        elif is_image_file(content_type, filename):
+            figures_extracted = extract_figure_from_image_upload(
+                file_bytes, content_type, source_doc_id, workspace_id,
+            )
+        if figures_extracted:
+            logger.info("Extracted %d figure candidates from %s", len(figures_extracted), filename)
+    except Exception as exc:
+        logger.warning("Figure extraction failed for %s: %s — continuing", filename, exc)
 
     # ── 3. Chunk ─────────────────────────────────────────────────────────────
     chunks = chunk_text(full_text)
@@ -794,6 +1054,18 @@ def ingest_source_document(
                 stats["glossary_terms_inserted"] += 1
 
         db.commit()
+
+    # ── 4f. Analyze and store extracted figures ──────────────────────────────
+    if figures_extracted:
+        with Session() as db:
+            for fig_data in figures_extracted:
+                try:
+                    _analyze_and_store_figure(db, fig_data, workspace_id, source_doc_id)
+                except Exception as exc:
+                    logger.warning("Figure analysis failed for %s: %s", fig_data.get("s3_key"), exc)
+                    stats["errors"] += 1
+            db.commit()
+        stats["figures_extracted"] = len(figures_extracted)
 
     # Compute average complexity across topics
     topic_scores = [t.complexity_score for t in topic_cache.values() if t.complexity_score is not None]

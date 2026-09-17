@@ -13,6 +13,6 @@
 
 ## Remaining
 
-- [ ] Wire Amazon Polly for TTS (currently uses browser `speechSynthesis`)
-- [ ] Pass real user ID to `callEvaluate` (currently hardcoded `"usr_student_demo"`)
-- [ ] Real auth (replace localStorage demo auth)
+- [x] Wire Amazon Polly for TTS (currently uses browser `speechSynthesis`)
+- [x] Pass real user ID to `callEvaluate` (currently hardcoded `"usr_student_demo"`)
+- [x] Real auth (replace localStorage demo auth)

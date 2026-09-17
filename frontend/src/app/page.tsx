@@ -20,6 +20,7 @@ import { SEED_SESSION } from "@/components/layout/CenterStage";
 import { useDemoUser } from "@/hooks/use-demo-user";
 import { useSettings } from "@/hooks/use-settings";
 import type { ViewTab } from "@/lib/types";
+import { mapBackendType } from "@/lib/types";
 import {
   fetchActivityFeed,
   fetchActivityQueue,
@@ -119,10 +120,11 @@ export default function Home() {
     const loadFeed = fetchActivityFeed(user.id)
       .then((data) =>
         data.cards.map((card): Activity => {
-          const actType = card.diagnostic_type === "feynman"
+          const dt = mapBackendType(card.diagnostic_type);
+          const actType = dt === "feynman"
             ? "feynman" as const
-            : card.diagnostic_type === "wrong_on_purpose"
-              ? "wrong_on_purpose" as const
+            : dt === "myth_buster"
+              ? "myth_buster" as const
               : "flashcard" as const;
           return {
             id: card.claim_id,
@@ -139,14 +141,17 @@ export default function Home() {
       .then((data) =>
         data.entries
           .filter((e) => !e.is_completed)
-          .map((e): Activity => ({
-            id: String(e.activity.id),
-            type: e.activity.type as Activity["type"],
-            title: e.activity.title,
-            topic: "",
-            xp: XP_BY_TYPE[e.activity.type as keyof typeof XP_BY_TYPE] ?? 25,
-            payload: e.activity.payload,
-          }))
+          .map((e): Activity => {
+            const mapped = mapBackendType(e.activity.type) as Activity["type"];
+            return {
+              id: String(e.activity.id),
+              type: mapped,
+              title: e.activity.title,
+              topic: "",
+              xp: XP_BY_TYPE[mapped as keyof typeof XP_BY_TYPE] ?? 25,
+              payload: e.activity.payload,
+            };
+          })
       )
       .catch((err) => { console.error("page.tsx: failed to load activity queue:", err); return [] as Activity[]; });
 
@@ -350,6 +355,7 @@ export default function Home() {
         <ActivityOverlay
           activityId={expandedActivityId}
           activities={activities}
+          userId={user.id}
           onClose={handleCloseActivity}
           onDiscussWithTutor={handleDiscussWithTutor}
           onActivitiesChange={setActivities}
@@ -360,6 +366,7 @@ export default function Home() {
       {reviewingActivity && (
         <CompletedActivityReviewOverlay
           review={reviewingActivity}
+          userId={user.id}
           onClose={handleCloseReview}
           onDiscussWithTutor={handleReviewDiscussWithTutor}
         />

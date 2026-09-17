@@ -172,6 +172,16 @@ export function SettingsPage({ user, settings, onUpdateProfile, onUpdateSetting 
     { value: "ko-KR", label: "Korean" },
     { value: "pt-BR", label: "Portuguese (BR)" },
     { value: "ar-SA", label: "Arabic" },
+    { value: "hi-IN", label: "Hindi" },
+    { value: "it-IT", label: "Italian" },
+    { value: "ru-RU", label: "Russian" },
+    { value: "tr-TR", label: "Turkish" },
+    { value: "vi-VN", label: "Vietnamese" },
+    { value: "nl-NL", label: "Dutch" },
+    { value: "pl-PL", label: "Polish" },
+    { value: "th-TH", label: "Thai" },
+    { value: "id-ID", label: "Indonesian" },
+    { value: "sw-KE", label: "Swahili" },
   ];
 
   return (
@@ -477,6 +487,15 @@ export function SettingsPage({ user, settings, onUpdateProfile, onUpdateSetting 
               <option value="ko">Korean</option>
               <option value="ar">Arabic</option>
               <option value="hi">Hindi</option>
+              <option value="it">Italian</option>
+              <option value="ru">Russian</option>
+              <option value="tr">Turkish</option>
+              <option value="vi">Vietnamese</option>
+              <option value="nl">Dutch</option>
+              <option value="pl">Polish</option>
+              <option value="th">Thai</option>
+              <option value="id">Indonesian</option>
+              <option value="sw">Swahili</option>
             </select>
           </div>
         </div>

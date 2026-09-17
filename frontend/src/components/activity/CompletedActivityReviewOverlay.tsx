@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { X, MessageSquare, Bot, Clock, User, CheckCircle2, XCircle, AlertCircle, Play, Pause, Eye, EyeOff } from "lucide-react";
 import { getTypeConfig } from "@/components/activity/ActivityFeed";
 import type { ActivityType } from "@/components/activity/ActivityFeed";
+import { synthesizeSpeech } from "@/lib/api";
 
 export interface CompletedActivityReview {
   id: string;
@@ -22,6 +23,7 @@ export interface CompletedActivityReview {
 
 interface CompletedActivityReviewOverlayProps {
   review: CompletedActivityReview;
+  userId: string;
   onClose: () => void;
   onDiscussWithTutor?: (context: string) => void;
 }
@@ -229,7 +231,7 @@ function fmtTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function PodcastPlayer({ payload }: { payload: Record<string, any> }) {
+function PodcastPlayer({ payload, userId }: { payload: Record<string, any>; userId: string }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
@@ -237,13 +239,18 @@ function PodcastPlayer({ payload }: { payload: Record<string, any> }) {
   const [showTranscript, setShowTranscript] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.playbackRate = playbackRate;
   }, [playbackRate]);
 
   useEffect(() => {
-    return () => { if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; } };
+    return () => {
+      mountedRef.current = false;
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    };
   }, []);
 
   const initAudio = useCallback(() => {
@@ -257,29 +264,53 @@ function PodcastPlayer({ payload }: { payload: Record<string, any> }) {
     return audio;
   }, [payload.audio_url]);
 
-  const handlePlay = () => {
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+
+  const handlePlay = async () => {
     if (payload.audio_url) {
       const audio = initAudio();
       audio.playbackRate = playbackRate;
       audio.play();
       setIsPlaying(true);
-    } else if ("speechSynthesis" in window && payload.summary) {
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      } else {
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(payload.summary);
-        utter.rate = playbackRate;
-        utter.onend = () => setIsPlaying(false);
-        window.speechSynthesis.speak(utter);
-      }
+    } else if (audioRef.current) {
+      audioRef.current.playbackRate = playbackRate;
+      audioRef.current.play();
       setIsPlaying(true);
+    } else if ("speechSynthesis" in window && window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+      setIsPlaying(true);
+    } else if (payload.summary && !isSynthesizing) {
+      setIsSynthesizing(true);
+      try {
+        const { audio_url } = await synthesizeSpeech(userId, payload.summary);
+        if (!mountedRef.current) return;
+        const audio = new Audio(audio_url);
+        audio.onended = () => { setIsPlaying(false); setCurrentTime(0); };
+        audio.onerror = () => { setIsPlaying(false); };
+        audio.onloadedmetadata = () => { setDuration(audio.duration); };
+        audio.ontimeupdate = () => { setCurrentTime(audio.currentTime); };
+        audioRef.current = audio;
+        audio.playbackRate = playbackRate;
+        audio.play();
+        setIsPlaying(true);
+      } catch {
+        if ("speechSynthesis" in window) {
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(payload.summary);
+          utter.rate = playbackRate;
+          utter.onend = () => setIsPlaying(false);
+          window.speechSynthesis.speak(utter);
+          setIsPlaying(true);
+        }
+      } finally {
+        setIsSynthesizing(false);
+      }
     }
   };
 
   const handlePause = () => {
     if (audioRef.current) audioRef.current.pause();
-    if (window.speechSynthesis.speaking) window.speechSynthesis.pause();
+    if ("speechSynthesis" in window && window.speechSynthesis.speaking) window.speechSynthesis.pause();
     setIsPlaying(false);
   };
 
@@ -367,6 +398,7 @@ function PodcastPlayer({ payload }: { payload: Record<string, any> }) {
 
 export function CompletedActivityReviewOverlay({
   review,
+  userId,
   onClose,
   onDiscussWithTutor,
 }: CompletedActivityReviewOverlayProps) {
@@ -477,15 +509,47 @@ export function CompletedActivityReviewOverlay({
 
             {/* Mini-podcast audio player */}
             {review.activityType === "mini_podcast" && review.payload && (
-              <PodcastPlayer payload={review.payload} />
+              <PodcastPlayer payload={review.payload} userId={userId} />
             )}
 
-            {/* Quiz breakdown OR flat student response */}
+            {/* Quiz breakdown OR Parsons steps OR flat student response */}
             {quizQuestions && quizQuestions.length > 0 ? (
               <QuizBreakdownSection
                 questions={quizQuestions}
                 answers={quizAnswers}
               />
+            ) : review.activityType === "parsons" ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border bg-secondary/20 px-4 py-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-muted-foreground">
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-widest">
+                      Student&apos;s Order
+                    </span>
+                  </div>
+                  {(() => {
+                    let studentSteps: string[] = [];
+                    try { studentSteps = JSON.parse(review.studentResponse ?? "[]"); } catch { /* ignore */ }
+                    return Array.isArray(studentSteps) && studentSteps.length > 0 ? (
+                      <ol className="list-inside list-decimal space-y-1 text-sm text-foreground/80">
+                        {studentSteps.map((s, i) => <li key={i}>{s}</li>)}
+                      </ol>
+                    ) : (
+                      <p className="text-sm italic text-muted-foreground">No response recorded</p>
+                    );
+                  })()}
+                </div>
+                {!isCorrect && review.payload?.canonicalOrder && Array.isArray(review.payload.canonicalOrder) && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-amber-700">
+                      Correct Order
+                    </p>
+                    <ol className="list-inside list-decimal space-y-1 text-sm text-amber-900">
+                      {(review.payload.canonicalOrder as string[]).map((s, i) => <li key={i}>{s}</li>)}
+                    </ol>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="rounded-lg border bg-secondary/20 px-4 py-3">
                 <div className="mb-2 flex items-center gap-1.5 text-muted-foreground">

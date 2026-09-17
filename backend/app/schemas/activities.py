@@ -25,6 +25,10 @@ ActivityType = Literal[
     "visual_sketch",
     "visual_label",
     "visual_proof",
+    "parsons",
+    "figure_flashcard",
+    "figure_label",
+    "figure_explain",
 ]
 
 ActivityScope = Literal["CLASSROOM_SHARED", "STUDENT_PERSONAL"]

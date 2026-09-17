@@ -69,7 +69,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "description": (
             "Create practice activities for a specific atomic claim. Available types: "
             "flashcard, true_false, multi_choice, fill_blank, wrong_on_purpose, feynman, "
-            "visual_sketch, visual_label, visual_proof. "
+            "visual_sketch, visual_label, visual_proof, parsons. "
             "For teachers, activities are automatically shared with all students in the "
             "classroom. For students, activities are added to their personal practice queue."
         ),
@@ -85,9 +85,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "array",
                         "items": {
                             "type": "string",
-                            "enum": ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof"],
+                            "enum": ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof", "parsons"],
                         },
-                        "description": "Which activity types to generate. Defaults to all nine.",
+                        "description": "Which activity types to generate. Defaults to all ten.",
                     },
                 },
                 "required": ["claim_id"],
@@ -374,7 +374,7 @@ async def _tool_create_activities(
     if claim is None:
         return {"error": f"Claim '{claim_id}' not found"}
 
-    types = tool_input.get("types", ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof"])
+    types = tool_input.get("types", ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof", "parsons"])
 
     activities = await generate_basic_activities(
         db=db,

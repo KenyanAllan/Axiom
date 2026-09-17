@@ -15,7 +15,7 @@ import re
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.tables import Activity, AtomicClaim, Topic, TopicPrerequisite, UserMastery
+from app.models.tables import Activity, AtomicClaim, Figure, FigureClaim, Topic, TopicPrerequisite, UserMastery
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ async def generate_basic_activities(
     activity types to generate (default: all three).
     """
     if types is None:
-        types = ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman"]
+        types = ["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "parsons"]
 
     activities: list[Activity] = []
 
@@ -286,6 +286,120 @@ async def generate_basic_activities(
         db.add(activity)
         activities.append(activity)
 
+    # ── Parsons (reorder steps) ───────────────────────────────────────────────
+    if "parsons" in types:
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", claim.content.strip()) if s.strip()]
+        unique_sentences = list(dict.fromkeys(sentences))
+        canonical = unique_sentences[:6]
+        if len(canonical) >= 3 and len(set(canonical)) > 1:
+            shuffled = canonical.copy()
+            random.shuffle(shuffled)
+            if shuffled == canonical:
+                shuffled = canonical[1:] + canonical[:1]
+            activity = Activity(
+                workspace_id=workspace_id,
+                creator_id=creator_id,
+                scope="STUDENT_PERSONAL",
+                type="parsons",
+                title=f"Arrange: {claim.title}",
+                difficulty=2,
+                target_claim_ids=[claim.id],
+                payload={
+                    "prompt": f"Arrange these steps in the correct order for: {claim.title}",
+                    "shuffledSteps": shuffled,
+                    "canonicalOrder": canonical,
+                },
+            )
+            db.add(activity)
+            activities.append(activity)
+
+    # ── Figure-based activities ─────────────────────────────────────────────
+    figure_types_requested = {"figure_flashcard", "figure_label", "figure_explain"} & set(types)
+    if figure_types_requested:
+        figures = await _get_claim_figures(db, claim.id)
+
+        for figure in figures:
+            if "figure_flashcard" in types:
+                activity = Activity(
+                    workspace_id=workspace_id,
+                    creator_id=creator_id,
+                    scope="STUDENT_PERSONAL",
+                    type="figure_flashcard",
+                    title=f"Figure Flashcard: {claim.title}",
+                    difficulty=1,
+                    target_claim_ids=[claim.id],
+                    payload={
+                        "figure_id": figure.id,
+                        "figure_s3_key": figure.s3_key,
+                        "figure_caption": figure.caption,
+                        "figure_type": figure.figure_type,
+                        "front_prompt": f"What does this {figure.figure_type} illustrate?",
+                        "back": f"{figure.caption}\n\nRelated concept: {claim.content}",
+                    },
+                )
+                db.add(activity)
+                activities.append(activity)
+
+            if "figure_label" in types:
+                key_terms = _extract_key_terms(claim.content)
+                if len(key_terms) >= 2:
+                    activity = Activity(
+                        workspace_id=workspace_id,
+                        creator_id=creator_id,
+                        scope="STUDENT_PERSONAL",
+                        type="figure_label",
+                        title=f"Label Figure: {claim.title}",
+                        difficulty=2,
+                        target_claim_ids=[claim.id],
+                        payload={
+                            "figure_id": figure.id,
+                            "figure_s3_key": figure.s3_key,
+                            "figure_caption": figure.caption,
+                            "prompt": f"Study this {figure.figure_type} and identify the key components.",
+                            "reference_description": claim.content,
+                            "expected_labels": key_terms,
+                        },
+                    )
+                    db.add(activity)
+                    activities.append(activity)
+
+            if "figure_explain" in types:
+                activity = Activity(
+                    workspace_id=workspace_id,
+                    creator_id=creator_id,
+                    scope="STUDENT_PERSONAL",
+                    type="figure_explain",
+                    title=f"Explain Figure: {claim.title}",
+                    difficulty=2,
+                    target_claim_ids=[claim.id],
+                    payload={
+                        "figure_id": figure.id,
+                        "figure_s3_key": figure.s3_key,
+                        "figure_caption": figure.caption,
+                        "prompt": (
+                            f"Explain what this {figure.figure_type} shows and why it is "
+                            f"significant for understanding {claim.title}."
+                        ),
+                        "key_points": _extract_key_points(claim.content),
+                    },
+                )
+                db.add(activity)
+                activities.append(activity)
+
+    # ── Enhance visual activities with reference figures ────────────────────
+    if "visual_sketch" in types or "visual_label" in types:
+        ref_figures = figures if figure_types_requested else await _get_claim_figures(db, claim.id)
+        if ref_figures:
+            ref = ref_figures[0]
+            for act in activities:
+                if act.type in ("visual_sketch", "visual_label") and act.payload:
+                    act.payload = {
+                        **act.payload,
+                        "reference_figure_id": ref.id,
+                        "reference_figure_s3_key": ref.s3_key,
+                        "reference_figure_caption": ref.caption,
+                    }
+
     await db.flush()
 
     # Refresh all activities to get auto-generated IDs
@@ -293,6 +407,17 @@ async def generate_basic_activities(
         await db.refresh(a)
 
     return activities
+
+
+async def _get_claim_figures(db: AsyncSession, claim_id: str) -> list[Figure]:
+    """Get non-decorative figures associated with a claim."""
+    result = await db.execute(
+        select(Figure)
+        .join(FigureClaim, Figure.id == FigureClaim.figure_id)
+        .where(FigureClaim.claim_id == claim_id, Figure.is_decorative == False)
+        .order_by(FigureClaim.similarity_score.desc())
+    )
+    return list(result.scalars().all())
 
 
 async def _find_distractors(

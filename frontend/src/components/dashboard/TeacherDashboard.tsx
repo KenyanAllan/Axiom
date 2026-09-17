@@ -35,6 +35,7 @@ import type {
   ActivityHistoryItem,
 } from "@/lib/api";
 import type { CompletedActivityReview } from "@/components/activity/CompletedActivityReviewOverlay";
+import { mapBackendType } from "@/lib/types";
 
 // ── Demo student data ─────────────────────────────────────────────────────────
 
@@ -302,8 +303,8 @@ const DEMO_ACTIVITY_HISTORY: ActivityHistoryItem[] = [
     id: 7,
     student_id: "usr_emma",
     student_name: "Emma Singh",
-    activity_type: "wrong_on_purpose",
-    activity_title: "Wrong on Purpose: RREF Uniqueness",
+    activity_type: "myth_buster",
+    activity_title: "Myth Buster: RREF Uniqueness",
     claim_title: "Uniqueness of RREF",
     outcome: "understood",
     student_response: "A matrix can have multiple different RREFs. (This is intentionally wrong — RREF is unique for any given matrix.)",
@@ -316,7 +317,7 @@ const DEMO_ACTIVITY_HISTORY: ActivityHistoryItem[] = [
 function historyItemToReview(item: ActivityHistoryItem): CompletedActivityReview {
   return {
     id: String(item.id),
-    activityType: item.activity_type,
+    activityType: mapBackendType(item.activity_type),
     activityTitle: item.activity_title,
     claimTitle: item.claim_title,
     topic: null,
@@ -897,10 +898,11 @@ function ActivityHistoryRow({
     true_false: "True/False",
     fill_blank: "Fill Blank",
     short_answer: "Short Answer",
-    wrong_on_purpose: "Wrong on Purpose",
+    myth_buster: "Myth Buster",
     multi_choice: "Multiple Choice",
     mini_podcast: "Mini Podcast",
     flashcard_deck: "Flashcard Deck",
+    parsons: "Parsons",
   };
 
   const typeColors: Record<string, string> = {
@@ -909,7 +911,8 @@ function ActivityHistoryRow({
     feynman: "bg-amber-100 text-amber-700",
     scenario: "bg-emerald-100 text-emerald-700",
     true_false: "bg-cyan-100 text-cyan-700",
-    wrong_on_purpose: "bg-rose-100 text-rose-700",
+    myth_buster: "bg-rose-100 text-rose-700",
+    parsons: "bg-pink-100 text-pink-700",
   };
 
   const hasDetail = item.student_response || item.feedback;
@@ -931,10 +934,10 @@ function ActivityHistoryRow({
             <span className="text-sm font-medium">{item.student_name}</span>
             <span
               className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                typeColors[item.activity_type] ?? "bg-secondary text-muted-foreground"
+                typeColors[mapBackendType(item.activity_type)] ?? "bg-secondary text-muted-foreground"
               }`}
             >
-              {typeLabel[item.activity_type] ?? item.activity_type}
+              {typeLabel[mapBackendType(item.activity_type)] ?? item.activity_type}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">

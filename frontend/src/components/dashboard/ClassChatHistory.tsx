@@ -13,6 +13,7 @@ import {
 import {
   fetchClassroomChatHistory,
   fetchClassroomChatSession,
+  authOnly,
 } from "@/lib/api";
 import type {
   ClassChatSessionItem,
@@ -250,7 +251,7 @@ export function ClassChatHistory({ userId }: ClassChatHistoryProps) {
       try {
         const res = await fetch(
           `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/classrooms`,
-          { headers: { "X-Demo-User": userId } }
+          { headers: authOnly(userId) }
         );
         if (!res.ok) return;
         const classrooms = await res.json();

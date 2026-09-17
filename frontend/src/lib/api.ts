@@ -9,6 +9,8 @@ import type {
   ClaimResponse,
   EvaluateRequest,
   EvaluateResult,
+  Figure,
+  FigureViewUrlResponse,
   FrontierResponse,
   GlossarySearchResponse,
   GlossaryTermResponse,
@@ -24,12 +26,82 @@ import type {
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const DEMO_WORKSPACE_ID = 1;
+export const TOKEN_KEY = "axiom_token";
+
+export function authOnly(userId: string): Record<string, string> {
+  const token = typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
+  }
+  return { "X-Demo-User": userId };
+}
 
 function headers(userId: string): HeadersInit {
-  return {
-    "Content-Type": "application/json",
-    "X-Demo-User": userId,
-  };
+  return { "Content-Type": "application/json", ...authOnly(userId) };
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: UserProfile;
+}
+
+export async function authLogin(
+  email: string,
+  password: string
+): Promise<AuthResponse> {
+  const res = await fetch(`${BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `Login failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function authRegister(
+  email: string,
+  password: string,
+  displayName: string,
+  role: "student" | "teacher"
+): Promise<AuthResponse> {
+  const res = await fetch(`${BASE}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, display_name: displayName, role }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `Registration failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ── Audio / Polly TTS ────────────────────────────────────────────────────────
+
+export interface SynthesizeResponse {
+  audio_url: string;
+  s3_key: string;
+  duration_seconds: number | null;
+  text_length: number;
+}
+
+export async function synthesizeSpeech(
+  userId: string,
+  text: string
+): Promise<SynthesizeResponse> {
+  const res = await fetch(`${BASE}/api/audio/synthesize`, {
+    method: "POST",
+    headers: headers(userId),
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error(`Synthesize failed: ${res.status}`);
+  return res.json();
 }
 
 // ── User profile ─────────────────────────────────────────────────────────────
@@ -304,7 +376,7 @@ export async function uploadSourceDoc(
 
   const res = await fetch(`${BASE}/api/sources/upload`, {
     method: "POST",
-    headers: { "X-Demo-User": userId },
+    headers: authOnly(userId),
     body: form,
   });
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
@@ -337,6 +409,44 @@ export async function getSourceViewUrl(
     headers: headers(userId),
   });
   if (!res.ok) throw new Error(`Get view URL failed: ${res.status}`);
+  return res.json();
+}
+
+// ── Figures ──────────────────────────────────────────────────────────────────
+
+export async function listFigures(
+  userId: string,
+  workspaceId: number = DEMO_WORKSPACE_ID
+): Promise<Figure[]> {
+  const res = await fetch(
+    `${BASE}/api/figures?workspace_id=${workspaceId}`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`List figures failed: ${res.status}`);
+  return res.json();
+}
+
+export async function listFiguresBySource(
+  userId: string,
+  sourceDocId: number | string
+): Promise<Figure[]> {
+  const res = await fetch(
+    `${BASE}/api/figures/by-source/${sourceDocId}`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`List figures by source failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getFigureViewUrl(
+  userId: string,
+  figureId: number
+): Promise<FigureViewUrlResponse> {
+  const res = await fetch(
+    `${BASE}/api/figures/${figureId}/view-url`,
+    { headers: headers(userId) }
+  );
+  if (!res.ok) throw new Error(`Get figure view URL failed: ${res.status}`);
   return res.json();
 }
 
@@ -423,7 +533,7 @@ export async function uploadChatImage(
     `${BASE}/api/chat/sessions/${sessionId}/upload-image`,
     {
       method: "POST",
-      headers: { "X-Demo-User": userId },
+      headers: authOnly(userId),
       body: formData,
     }
   );
@@ -447,7 +557,7 @@ export async function uploadVisualActivityImage(
     `${BASE}/api/activities/${activityId}/upload-visual-image`,
     {
       method: "POST",
-      headers: { "X-Demo-User": userId },
+      headers: authOnly(userId),
       body: formData,
     }
   );
@@ -471,7 +581,7 @@ export async function submitVisualResponse(
     `${BASE}/api/activities/${activityId}/submit-visual`,
     {
       method: "POST",
-      headers: { "X-Demo-User": userId },
+      headers: authOnly(userId),
       body: formData,
     }
   );

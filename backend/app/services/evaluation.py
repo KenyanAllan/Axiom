@@ -86,7 +86,7 @@ async def evaluate_student_response(
     visual_result: dict | None = None
 
     # Deterministic grading for known activity types
-    DETERMINISTIC_TYPES = {"true_false", "multi_choice", "flashcard", "flashcard_deck", "fill_blank"}
+    DETERMINISTIC_TYPES = {"true_false", "multi_choice", "flashcard", "flashcard_deck", "fill_blank", "parsons"}
     activity_type = activity_obj.type if activity_obj is not None else None
 
     if activity_type in DETERMINISTIC_TYPES and activity_obj is not None:
@@ -132,6 +132,20 @@ async def evaluate_student_response(
             else:
                 outcome = "did_not_understand"
                 feedback = f"Incorrect. The correct answer was \"{correct}\"."
+
+        elif activity_type == "parsons":
+            import json as _json
+            canonical = payload.get("canonicalOrder", [])
+            try:
+                given_order = _json.loads(student_response)
+            except (ValueError, TypeError):
+                given_order = []
+            if given_order == canonical:
+                outcome = "understood"
+                feedback = "Correct! You arranged the steps in the right order."
+            else:
+                outcome = "did_not_understand"
+                feedback = "Incorrect. The steps were not in the right order."
 
         else:
             outcome = "neutral"

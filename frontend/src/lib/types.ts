@@ -1,7 +1,14 @@
 // ── API response types — mirrors backend Pydantic schemas ─────────────────
 
 export type MasteryStatus = "unseen" | "active" | "mastered";
-export type DiagnosticType = "wrong_on_purpose" | "feynman" | "micro_project";
+export type DiagnosticType = "wrong_on_purpose" | "myth_buster" | "feynman" | "micro_project";
+export const BACKEND_TYPE_MAP: Record<string, string> = {
+  wrong_on_purpose: "myth_buster",
+};
+export function mapBackendType(t: string): string {
+  return BACKEND_TYPE_MAP[t] ?? t;
+}
+
 export type UserRole = "student" | "teacher" | "individual_learner";
 export type Outcome = "understood" | "did_not_understand" | "neutral";
 
@@ -12,14 +19,18 @@ export type ActivityType =
   | "true_false"
   | "short_answer"
   | "fill_blank"
-  | "wrong_on_purpose"
+  | "myth_buster"
   | "scenario"
   | "feynman"
   | "mini_podcast"
   | "quiz"
   | "visual_sketch"
   | "visual_label"
-  | "visual_proof";
+  | "visual_proof"
+  | "parsons"
+  | "figure_flashcard"
+  | "figure_label"
+  | "figure_explain";
 
 export interface UserProfile {
   id: string;
@@ -228,6 +239,32 @@ export interface ApiSourceDocument {
   transcript_s3_key: string | null;
   claim_count: number;
   created_at: string;
+}
+
+// ── Figure types ─────────────────────────────────────────────────────────────
+
+export interface Figure {
+  id: number;
+  workspace_id: number;
+  source_document_id: number | null;
+  s3_key: string;
+  content_type: string;
+  page_number: number | null;
+  caption: string;
+  figure_type: string;
+  labels: Array<{ name: string; confidence: number }> | null;
+  ocr_text: string | null;
+  width: number | null;
+  height: number | null;
+  size_bytes: number | null;
+  is_decorative: boolean;
+  associated_claim_ids: string[];
+  created_at: string;
+}
+
+export interface FigureViewUrlResponse {
+  url: string;
+  content_type: string;
 }
 
 // ── Chat types ────────────────────────────────────────────────────────────────

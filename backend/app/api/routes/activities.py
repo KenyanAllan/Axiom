@@ -51,7 +51,7 @@ router = APIRouter(prefix="/api/activities", tags=["activities"])
 class GenerateRequest(BaseModel):
     claim_id: str
     workspace_id: int
-    types: list[str] = Field(default=["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof"])
+    types: list[str] = Field(default=["flashcard", "true_false", "multi_choice", "fill_blank", "wrong_on_purpose", "feynman", "visual_sketch", "visual_label", "visual_proof", "parsons"])
 
 
 # ── POST /api/activities/evaluate ────────────────────────────────────────────

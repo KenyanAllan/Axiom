@@ -3,7 +3,7 @@ import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Axiom — Knowledge Graph Learning Workbench",
+  title: "Axiom Workbench",
   description:
     "Axiom: a minimalist, distraction-free technical learning workbench.",
 };

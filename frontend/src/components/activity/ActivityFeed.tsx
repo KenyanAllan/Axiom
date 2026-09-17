@@ -34,8 +34,11 @@ import {
   Camera,
   Image as ImageIcon,
   Upload,
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
-import { evaluateResponse, submitAttempt, generateAudioOverview, submitVisualResponse } from "@/lib/api";
+import { evaluateResponse, submitAttempt, generateAudioOverview, submitVisualResponse, synthesizeSpeech, getFigureViewUrl } from "@/lib/api";
 import type { WikiPage } from "@/components/layout/CenterStage";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -43,13 +46,17 @@ import type { WikiPage } from "@/components/layout/CenterStage";
 export type ActivityType =
   | "flashcard"
   | "quiz"
-  | "wrong_on_purpose"
+  | "myth_buster"
   | "scenario"
   | "feynman"
   | "mini_podcast"
   | "visual_sketch"
   | "visual_label"
-  | "visual_proof";
+  | "visual_proof"
+  | "parsons"
+  | "figure_flashcard"
+  | "figure_label"
+  | "figure_explain";
 
 export type QuizQuestionType =
   | "multi_choice"
@@ -131,7 +138,7 @@ export const INITIAL_ACTIVITIES: Activity[] = [
   },
   {
     id: "act_wop_1",
-    type: "wrong_on_purpose",
+    type: "myth_buster",
     title: "Spot the Flaw: Symmetric Matrix Claim",
     topic: "Matrix Properties",
     xp: 75,
@@ -207,8 +214,8 @@ export const TYPE_CONFIG: Partial<Record<
     color: "text-green-500",
     bg: "bg-green-50",
   },
-  wrong_on_purpose: {
-    label: "Wrong on Purpose",
+  myth_buster: {
+    label: "Myth Buster",
     icon: AlertTriangle,
     color: "text-amber-500",
     bg: "bg-amber-50",
@@ -249,6 +256,30 @@ export const TYPE_CONFIG: Partial<Record<
     color: "text-orange-500",
     bg: "bg-orange-50",
   },
+  parsons: {
+    label: "Parsons",
+    icon: ArrowUpDown,
+    color: "text-pink-500",
+    bg: "bg-pink-50",
+  },
+  figure_flashcard: {
+    label: "Figure Flashcard",
+    icon: ImageIcon,
+    color: "text-emerald-500",
+    bg: "bg-emerald-50",
+  },
+  figure_label: {
+    label: "Label Figure",
+    icon: Tags,
+    color: "text-teal-500",
+    bg: "bg-teal-50",
+  },
+  figure_explain: {
+    label: "Explain Figure",
+    icon: Eye,
+    color: "text-violet-500",
+    bg: "bg-violet-50",
+  },
 };
 
 export function getTypeConfig(type: ActivityType) {
@@ -258,13 +289,17 @@ export function getTypeConfig(type: ActivityType) {
 export const XP_BY_TYPE: Partial<Record<ActivityType, number>> = {
   flashcard: 25,
   quiz: 60,
-  wrong_on_purpose: 75,
+  myth_buster: 75,
   scenario: 100,
   feynman: 50,
   mini_podcast: 40,
   visual_sketch: 75,
   visual_label: 75,
   visual_proof: 100,
+  parsons: 60,
+  figure_flashcard: 25,
+  figure_label: 75,
+  figure_explain: 50,
 };
 
 const DEFAULT_XP = 30;
@@ -435,12 +470,13 @@ export function ActivityFeed({
   const ALL_TYPES: ActivityType[] = [
     "flashcard",
     "quiz",
-    "wrong_on_purpose",
+    "myth_buster",
     "scenario",
     "feynman",
     "mini_podcast",
     "visual_sketch",
     "visual_label",
+    "parsons",
     "visual_proof",
   ];
 
@@ -699,6 +735,7 @@ interface FeedbackState {
 }
 
 async function callEvaluate(
+  userId: string,
   activityId: string,
   studentResponse: string
 ): Promise<FeedbackState | null> {
@@ -706,7 +743,7 @@ async function callEvaluate(
   const numericId = Number(activityId);
   if (!isNaN(numericId) && Number.isInteger(numericId)) {
     try {
-      const data = await submitAttempt("usr_student_demo", {
+      const data = await submitAttempt(userId, {
         activity_id: numericId,
         student_response: studentResponse,
       });
@@ -721,7 +758,7 @@ async function callEvaluate(
 
   // 2. Try the evaluate endpoint (works with claim_id strings)
   try {
-    const data = await evaluateResponse("usr_student_demo", {
+    const data = await evaluateResponse(userId, {
       claim_id: activityId,
       student_response: studentResponse,
     });
@@ -933,6 +970,7 @@ function SubmitRow({
 
 interface RendererProps {
   activity: Activity;
+  userId: string;
   onDiscussWithTutor?: (context: string) => void;
   onSaveResult?: (result: { lastResponse: string; lastFeedback?: FeedbackState }) => void;
 }
@@ -1263,7 +1301,7 @@ function QuizScoreSummary({ questions, answers, score, total, activityTitle, onD
   );
 }
 
-function QuizActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+function QuizActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const questions: QuizQuestionDef[] = (activity.payload as any)?.questions ?? [];
 
   const restoredAnswers: Record<number, any> = (() => {
@@ -1339,7 +1377,7 @@ function QuizActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererPr
   );
 }
 
-function WrongOnPurposeActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+function MythBusterActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const [response, setResponse] = useState(activity.lastResponse ?? "");
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
@@ -1354,7 +1392,7 @@ function WrongOnPurposeActivity({ activity, onDiscussWithTutor, onSaveResult }: 
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const result = await callEvaluate(activity.id, response);
+      const result = await callEvaluate(userId, activity.id, response);
       if (result) {
         setFeedback(result);
         onSaveResult?.({ lastResponse: response, lastFeedback: result });
@@ -1420,7 +1458,7 @@ function WrongOnPurposeActivity({ activity, onDiscussWithTutor, onSaveResult }: 
   );
 }
 
-function ScenarioActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+function ScenarioActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const [response, setResponse] = useState(activity.lastResponse ?? "");
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
@@ -1435,7 +1473,7 @@ function ScenarioActivity({ activity, onDiscussWithTutor, onSaveResult }: Render
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const result = await callEvaluate(activity.id, response);
+      const result = await callEvaluate(userId, activity.id, response);
       if (result) {
         setFeedback(result);
         onSaveResult?.({ lastResponse: response, lastFeedback: result });
@@ -1488,7 +1526,7 @@ function ScenarioActivity({ activity, onDiscussWithTutor, onSaveResult }: Render
   );
 }
 
-function FeynmanActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+function FeynmanActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const [response, setResponse] = useState(activity.lastResponse ?? "");
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
@@ -1503,7 +1541,7 @@ function FeynmanActivity({ activity, onDiscussWithTutor, onSaveResult }: Rendere
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const result = await callEvaluate(activity.id, response);
+      const result = await callEvaluate(userId, activity.id, response);
       if (result) {
         setFeedback(result);
         onSaveResult?.({ lastResponse: response, lastFeedback: result });
@@ -1572,7 +1610,7 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+function MiniPodcastActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const [response, setResponse] = useState(activity.lastResponse ?? "");
   const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
   const [isLoading, setIsLoading] = useState(false);
@@ -1582,6 +1620,7 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
   const [duration, setDuration] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const mountedRef = useRef(true);
   const p = activity.payload ?? {};
   const draftRef = useRef(response);
   draftRef.current = response;
@@ -1595,7 +1634,9 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
 
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
   }, []);
 
@@ -1610,29 +1651,53 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
     return audio;
   };
 
-  const handleListen = () => {
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+
+  const handleListen = async () => {
     if (p.audio_url) {
       const audio = initAudio();
       audio.playbackRate = playbackRate;
       audio.play();
       setIsPlaying(true);
-    } else if ("speechSynthesis" in window && p.summary) {
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      } else {
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(p.summary);
-        utter.rate = playbackRate;
-        utter.onend = () => setIsPlaying(false);
-        window.speechSynthesis.speak(utter);
-      }
+    } else if (audioRef.current) {
+      audioRef.current.playbackRate = playbackRate;
+      audioRef.current.play();
       setIsPlaying(true);
+    } else if ("speechSynthesis" in window && window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+      setIsPlaying(true);
+    } else if (p.summary && !isSynthesizing) {
+      setIsSynthesizing(true);
+      try {
+        const { audio_url } = await synthesizeSpeech(userId, p.summary);
+        if (!mountedRef.current) return;
+        const audio = new Audio(audio_url);
+        audio.onended = () => { setIsPlaying(false); setCurrentTime(0); };
+        audio.onerror = () => { setIsPlaying(false); };
+        audio.onloadedmetadata = () => { setDuration(audio.duration); };
+        audio.ontimeupdate = () => { setCurrentTime(audio.currentTime); };
+        audioRef.current = audio;
+        audio.playbackRate = playbackRate;
+        audio.play();
+        setIsPlaying(true);
+      } catch {
+        if ("speechSynthesis" in window) {
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(p.summary);
+          utter.rate = playbackRate;
+          utter.onend = () => setIsPlaying(false);
+          window.speechSynthesis.speak(utter);
+          setIsPlaying(true);
+        }
+      } finally {
+        setIsSynthesizing(false);
+      }
     }
   };
 
   const handlePause = () => {
     if (audioRef.current) { audioRef.current.pause(); }
-    if (window.speechSynthesis.speaking) { window.speechSynthesis.pause(); }
+    if ("speechSynthesis" in window && window.speechSynthesis.speaking) { window.speechSynthesis.pause(); }
     setIsPlaying(false);
   };
 
@@ -1652,7 +1717,7 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
     if (!response.trim() || isLoading) return;
     setIsLoading(true);
     try {
-      const result = await callEvaluate(activity.id, response);
+      const result = await callEvaluate(userId, activity.id, response);
       if (result) {
         setFeedback(result);
         onSaveResult?.({ lastResponse: response, lastFeedback: result });
@@ -1769,7 +1834,7 @@ function MiniPodcastActivity({ activity, onDiscussWithTutor, onSaveResult }: Ren
 
 // ── Visual Activity (sketch / label / proof) ───────────────────────────────
 
-function VisualActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererProps) {
+function VisualActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -1778,6 +1843,7 @@ function VisualActivity({ activity, onDiscussWithTutor, onSaveResult }: Renderer
 
   const payload = activity.payload ?? {};
   const visualPrompt = payload.visual_prompt || payload.prompt || "Submit your visual response.";
+  const refFigureUrl = useFigureUrl(userId, payload.reference_figure_id);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1802,7 +1868,7 @@ function VisualActivity({ activity, onDiscussWithTutor, onSaveResult }: Renderer
     try {
       const numericId = Number(activity.id);
       if (isNaN(numericId)) throw new Error("Invalid activity ID");
-      const result = await submitVisualResponse("usr_student_demo", numericId, selectedFile);
+      const result = await submitVisualResponse(userId, numericId, selectedFile);
       const fb: FeedbackState = {
         is_correct: result.outcome === "understood",
         feedback: result.feedback,
@@ -1815,7 +1881,7 @@ function VisualActivity({ activity, onDiscussWithTutor, onSaveResult }: Renderer
     } finally {
       setSubmitting(false);
     }
-  }, [selectedFile, activity.id, onSaveResult]);
+  }, [selectedFile, activity.id, userId, onSaveResult]);
 
   const removeImage = useCallback(() => {
     setSelectedFile(null);
@@ -1826,6 +1892,20 @@ function VisualActivity({ activity, onDiscussWithTutor, onSaveResult }: Renderer
 
   return (
     <div className="space-y-4">
+      {refFigureUrl && (
+        <div className="rounded-lg border bg-card overflow-hidden">
+          <div className="border-b px-4 py-2">
+            <span className="text-xs font-medium text-muted-foreground">Reference Figure</span>
+          </div>
+          <div className="flex items-center justify-center bg-muted/30 p-4">
+            <img src={refFigureUrl} alt={payload.reference_figure_caption ?? "Reference"} className="max-h-48 rounded object-contain" />
+          </div>
+          {payload.reference_figure_caption && (
+            <p className="px-4 py-2 text-xs text-muted-foreground">{payload.reference_figure_caption}</p>
+          )}
+        </div>
+      )}
+
       <div className="rounded-lg border bg-card p-4">
         <p className="text-sm font-medium mb-2">{visualPrompt}</p>
         {payload.expected_labels && (
@@ -1904,6 +1984,374 @@ function VisualActivity({ activity, onDiscussWithTutor, onSaveResult }: Renderer
   );
 }
 
+// ── Parsons (reorder steps) ─────────────────────────────────────────────────
+
+function ParsonsActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const payload = activity.payload ?? {};
+  const canonicalOrder: string[] = payload.canonicalOrder ?? [];
+
+  const savedOrder: string[] | null = (() => {
+    if (!activity.lastResponse) return null;
+    try {
+      const parsed = JSON.parse(activity.lastResponse);
+      if (Array.isArray(parsed)) return parsed as string[];
+    } catch { /* ignore */ }
+    return null;
+  })();
+
+  const [steps, setSteps] = useState<string[]>(() => savedOrder ?? (payload.shuffledSteps as string[]) ?? []);
+  const [submitted, setSubmitted] = useState(() => savedOrder !== null);
+  const [isCorrect, setIsCorrect] = useState<boolean | null>(() => {
+    if (savedOrder === null) return null;
+    return savedOrder.length === canonicalOrder.length && savedOrder.every((s, i) => s === canonicalOrder[i]);
+  });
+  const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const reorderStep = (fromIndex: number, toIndex: number) => {
+    if (submitted) return;
+    if (toIndex < 0 || toIndex >= steps.length) return;
+    const next = [...steps];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    setSteps(next);
+  };
+
+  const handleSubmit = async () => {
+    if (submitted || submitting) return;
+    setSubmitting(true);
+    const correct = steps.length === canonicalOrder.length && steps.every((s, i) => s === canonicalOrder[i]);
+    setIsCorrect(correct);
+    setSubmitted(true);
+
+    const responseStr = JSON.stringify(steps);
+    const localFb: FeedbackState = {
+      is_correct: correct,
+      feedback: correct ? "Correct order!" : "Not quite — check the correct order below.",
+    };
+    try {
+      const result = await callEvaluate(userId, activity.id, responseStr);
+      const fb = result ?? localFb;
+      setIsCorrect(fb.is_correct);
+      setFeedback(fb);
+      onSaveResult?.({ lastResponse: responseStr, lastFeedback: fb });
+    } catch {
+      setFeedback(localFb);
+      onSaveResult?.({ lastResponse: responseStr, lastFeedback: localFb });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReset = () => {
+    setSteps((payload.shuffledSteps as string[]) ?? []);
+    setSubmitted(false);
+    setIsCorrect(null);
+    setFeedback(null);
+  };
+
+  return (
+    <div className="space-y-4 px-5 py-6">
+      <p className="text-sm font-medium">{payload.prompt ?? "Arrange these steps in the correct order."}</p>
+
+      <div className="space-y-2">
+        {steps.map((step, i) => (
+          <div
+            key={step}
+            className={`flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors ${
+              submitted
+                ? isCorrect
+                  ? "border-green-300 bg-green-50"
+                  : "border-red-300 bg-red-50"
+                : "border-border bg-card hover:bg-accent/50"
+            }`}
+          >
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted font-mono text-xs font-bold">
+              {i + 1}
+            </span>
+            <span className="flex-1 text-sm">{step}</span>
+            {!submitted && (
+              <div className="flex flex-col gap-0.5">
+                <button
+                  onClick={() => reorderStep(i, i - 1)}
+                  disabled={i === 0}
+                  className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => reorderStep(i, i + 1)}
+                  disabled={i === steps.length - 1}
+                  className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {!submitted ? (
+        <button
+          onClick={handleSubmit}
+          disabled={submitting}
+          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+          Check Order
+        </button>
+      ) : (
+        <button
+          onClick={handleReset}
+          className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+        >
+          <RotateCcw className="h-4 w-4" />
+          Try Again
+        </button>
+      )}
+
+      {submitted && !isCorrect && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-700">Correct order</p>
+          <ol className="list-inside list-decimal space-y-1 text-sm text-amber-900">
+            {canonicalOrder.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {feedback && (
+        <FeedbackBanner
+          feedback={feedback}
+          activityTitle={activity.title}
+          onDiscussWithTutor={onDiscussWithTutor}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Figure activities ─────────────────────────────────────────────────────
+
+function useFigureUrl(userId: string, figureId: number | undefined) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!figureId) return;
+    let cancelled = false;
+    getFigureViewUrl(userId, figureId).then(({ url }) => {
+      if (!cancelled) setUrl(url);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [userId, figureId]);
+  return url;
+}
+
+function FigureFlashcardActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const p = activity.payload ?? {};
+  const figUrl = useFigureUrl(userId, p.figure_id);
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-card overflow-hidden">
+        {figUrl ? (
+          <div className="flex items-center justify-center bg-muted/30 p-4">
+            <img src={figUrl} alt={p.figure_caption ?? "Figure"} className="max-h-64 rounded object-contain" />
+          </div>
+        ) : (
+          <div className="flex items-center justify-center bg-muted/30 p-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        <div className="p-4">
+          <p className="text-sm font-medium">{p.front_prompt ?? "What does this figure illustrate?"}</p>
+        </div>
+      </div>
+
+      {!revealed ? (
+        <button
+          onClick={() => { setRevealed(true); onSaveResult?.({ lastResponse: "revealed" }); }}
+          className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Reveal Answer
+        </button>
+      ) : (
+        <div className="rounded-lg border bg-emerald-50 p-4">
+          <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-line">{p.back}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FigureExplainActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const p = activity.payload ?? {};
+  const figUrl = useFigureUrl(userId, p.figure_id);
+  const [response, setResponse] = useState(activity.lastResponse ?? "");
+  const [feedback, setFeedback] = useState<FeedbackState | null>(activity.lastFeedback ?? null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!response.trim() || isLoading) return;
+    setIsLoading(true);
+    try {
+      const result = await callEvaluate(userId, activity.id, response);
+      if (result) {
+        setFeedback(result);
+        onSaveResult?.({ lastResponse: response, lastFeedback: result });
+      } else {
+        const fb = {
+          is_correct: response.trim().length > 30,
+          feedback: response.trim().length > 30
+            ? "Good analysis of the figure!"
+            : "Try to provide a more detailed explanation of what the figure shows.",
+        };
+        setFeedback(fb);
+        onSaveResult?.({ lastResponse: response, lastFeedback: fb });
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-card overflow-hidden">
+        {figUrl ? (
+          <div className="flex items-center justify-center bg-muted/30 p-4">
+            <img src={figUrl} alt={p.figure_caption ?? "Figure"} className="max-h-64 rounded object-contain" />
+          </div>
+        ) : (
+          <div className="flex items-center justify-center bg-muted/30 p-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        <div className="p-4">
+          <p className="text-sm font-medium">{p.prompt ?? "Explain what this figure shows."}</p>
+        </div>
+      </div>
+
+      {!feedback ? (
+        <SubmitRow
+          value={response}
+          onChange={setResponse}
+          onSubmit={handleSubmit}
+          isLoading={isLoading}
+          placeholder="Explain what this figure illustrates and why it matters..."
+          multiline
+        />
+      ) : (
+        <>
+          {response && (
+            <div className="rounded-lg border bg-secondary/20 px-4 py-3">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Your Answer</p>
+              <p className="text-sm leading-relaxed text-foreground/80">{response}</p>
+            </div>
+          )}
+          <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function FigureLabelActivity({ activity, userId, onDiscussWithTutor, onSaveResult }: RendererProps) {
+  const p = activity.payload ?? {};
+  const figUrl = useFigureUrl(userId, p.figure_id);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type)) {
+      alert("Please select a PNG, JPEG, GIF, or WebP image.");
+      return;
+    }
+    if (file.size > 3_750_000) { alert("Image must be under 3.75 MB."); return; }
+    setSelectedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+    setFeedback(null);
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
+    if (!selectedFile) return;
+    setSubmitting(true);
+    try {
+      const numericId = Number(activity.id);
+      if (isNaN(numericId)) throw new Error("Invalid activity ID");
+      const result = await submitVisualResponse(userId, numericId, selectedFile);
+      const fb: FeedbackState = { is_correct: result.outcome === "understood", feedback: result.feedback };
+      setFeedback(fb);
+      onSaveResult?.({ lastResponse: "(visual)", lastFeedback: fb });
+    } catch {
+      setFeedback({ is_correct: false, feedback: "Failed to submit. Please try again." });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [selectedFile, activity.id, userId, onSaveResult]);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-card overflow-hidden">
+        {figUrl ? (
+          <div className="flex items-center justify-center bg-muted/30 p-4">
+            <img src={figUrl} alt={p.figure_caption ?? "Figure"} className="max-h-64 rounded object-contain" />
+          </div>
+        ) : (
+          <div className="flex items-center justify-center bg-muted/30 p-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        <div className="p-4">
+          <p className="text-sm font-medium">{p.prompt ?? "Label the key components in this figure."}</p>
+          {p.expected_labels && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Key elements: {p.expected_labels.join(", ")}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {previewUrl ? (
+        <div className="relative rounded-lg border bg-muted/30 p-2">
+          <img src={previewUrl} alt="Your labeled version" className="max-h-64 mx-auto rounded-md object-contain" />
+          <button
+            onClick={() => { setSelectedFile(null); if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }}
+            className="absolute top-1 right-1 rounded-full bg-background/80 p-1 hover:bg-background"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full rounded-lg border-2 border-dashed border-muted-foreground/30 p-8 text-center hover:border-muted-foreground/50 transition-colors"
+        >
+          <Camera className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Upload your labeled version</p>
+        </button>
+      )}
+
+      <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" capture="environment" onChange={handleFileSelect} className="hidden" />
+
+      {selectedFile && !feedback && (
+        <button onClick={handleSubmit} disabled={submitting}
+          className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2">
+          {submitting ? (<><Loader2 className="h-4 w-4 animate-spin" />Grading...</>) : (<><Send className="h-4 w-4" />Submit</>)}
+        </button>
+      )}
+
+      {feedback && <FeedbackBanner feedback={feedback} activityTitle={activity.title} onDiscussWithTutor={onDiscussWithTutor} />}
+    </div>
+  );
+}
+
 // ── Card renderer map ────────────────────────────────────────────────────────
 
 function FallbackActivity({ activity }: RendererProps) {
@@ -1922,13 +2370,17 @@ const ACTIVITY_RENDERERS: Partial<Record<
 >> = {
   flashcard: FlashcardDeckActivity,
   quiz: QuizActivity,
-  wrong_on_purpose: WrongOnPurposeActivity,
+  myth_buster: MythBusterActivity,
   scenario: ScenarioActivity,
   feynman: FeynmanActivity,
   mini_podcast: MiniPodcastActivity,
   visual_sketch: VisualActivity,
   visual_label: VisualActivity,
   visual_proof: VisualActivity,
+  parsons: ParsonsActivity,
+  figure_flashcard: FigureFlashcardActivity,
+  figure_label: FigureLabelActivity,
+  figure_explain: FigureExplainActivity,
 };
 
 // ── Fullscreen overlay ───────────────────────────────────────────────────────
@@ -1936,6 +2388,7 @@ const ACTIVITY_RENDERERS: Partial<Record<
 interface ActivityOverlayProps {
   activityId: string;
   activities: Activity[];
+  userId: string;
   onClose: () => void;
   onDiscussWithTutor?: (context: string) => void;
   onActivitiesChange?: (activities: Activity[]) => void;
@@ -1944,6 +2397,7 @@ interface ActivityOverlayProps {
 export function ActivityOverlay({
   activityId,
   activities,
+  userId,
   onClose,
   onDiscussWithTutor,
   onActivitiesChange,
@@ -1992,6 +2446,7 @@ export function ActivityOverlay({
             </div>
             <Renderer
               activity={activity}
+              userId={userId}
               onDiscussWithTutor={onDiscussWithTutor}
               onSaveResult={(result) => {
                 onActivitiesChange?.(

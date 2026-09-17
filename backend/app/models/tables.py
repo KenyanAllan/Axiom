@@ -116,6 +116,7 @@ class Workspace(Base):
     activities = relationship("Activity", back_populates="workspace", lazy="selectin")
     source_documents = relationship("SourceDocument", back_populates="workspace", lazy="selectin")
     glossary_terms = relationship("GlossaryTerm", back_populates="workspace", lazy="selectin")
+    figures = relationship("Figure", back_populates="workspace", lazy="selectin")
 
 
 # ── Source Documents (Layer 1 Ground-Truth) ──────────────────────────────────
@@ -146,6 +147,7 @@ class SourceDocument(Base):
 
     workspace = relationship("Workspace", back_populates="source_documents")
     uploader = relationship("User")
+    figures = relationship("Figure", back_populates="source_document", lazy="selectin")
 
 
 # ── Topics (WikiPages) ─────────────────────────────────────────────────────────
@@ -247,6 +249,53 @@ class GlossaryTerm(Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "term", name="uq_workspace_term"),
     )
+
+
+# ── Figures ────────────────────────────────────────────────────────────────────
+
+
+class Figure(Base):
+    __tablename__ = "figures"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(
+        Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    source_document_id = Column(
+        Integer, ForeignKey("source_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    s3_key = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)
+    page_number = Column(Integer, nullable=True)
+    caption = Column(Text, nullable=False)
+    figure_type = Column(String, nullable=False, default="unknown")
+    labels = Column(JSONB, nullable=True)
+    ocr_text = Column(Text, nullable=True)
+    embedding = Column(Vector(1024))
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    is_decorative = Column(Boolean, nullable=False, default=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    workspace = relationship("Workspace", back_populates="figures")
+    source_document = relationship("SourceDocument", back_populates="figures")
+
+
+class FigureClaim(Base):
+    __tablename__ = "figure_claims"
+
+    figure_id = Column(
+        Integer, ForeignKey("figures.id", ondelete="CASCADE"), primary_key=True
+    )
+    claim_id = Column(
+        String, ForeignKey("atomic_claims.id", ondelete="CASCADE"), primary_key=True
+    )
+    similarity_score = Column(Float, nullable=True)
 
 
 # ── User Mastery ────────────────────────────────────────────────────────────────
