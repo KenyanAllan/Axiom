@@ -1,9 +1,6 @@
-"""Alembic env — reads the app config and targets the ORM metadata."""
-
-from logging.config import fileConfig
-
-from alembic import context
-from sqlalchemy import engine_from_config, pool
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import get_settings
 from app.core.database import Base

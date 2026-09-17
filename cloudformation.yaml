@@ -21,6 +21,8 @@ Metadata:
         Parameters: [DBMasterUsername, DBMasterPassword, DBInstanceClass]
       - Label: { default: 'Application' }
         Parameters: [JWTSecretKey, CORSOrigins, GitRepositoryURL, GitBranch]
+      - Label: { default: 'Storage' }
+        Parameters: [CreateS3Buckets, ExistingSourceDocsBucketName, ExistingTranscriptionsBucketName, ExistingAudioBucketName, ExistingTextractBucketName]
       - Label: { default: 'Optional Services' }
         Parameters: [IncludeElastiCache]
     ParameterLabels:
@@ -35,6 +37,11 @@ Metadata:
       CORSOrigins: { default: 'Allowed CORS origins' }
       GitRepositoryURL: { default: 'GitHub repository URL' }
       GitBranch: { default: 'Git branch to deploy' }
+      CreateS3Buckets: { default: 'Create new S3 buckets?' }
+      ExistingSourceDocsBucketName: { default: 'Existing Source Docs bucket name' }
+      ExistingTranscriptionsBucketName: { default: 'Existing Transcriptions bucket name' }
+      ExistingAudioBucketName: { default: 'Existing Audio bucket name' }
+      ExistingTextractBucketName: { default: 'Existing Textract bucket name' }
       IncludeElastiCache: { default: 'Deploy ElastiCache Redis?' }
 
 Parameters:
@@ -103,6 +110,32 @@ Parameters:
     Default: 'main'
     Description: Git branch to clone and deploy.
 
+  CreateS3Buckets:
+    Type: String
+    Default: 'No'
+    AllowedValues: ['Yes', 'No']
+    Description: 'No = Use existing pre-created S3 buckets. Yes = Provision new S3 buckets in CloudFormation.'
+
+  ExistingSourceDocsBucketName:
+    Type: String
+    Default: 'axiom-source-documents'
+    Description: Name of existing S3 bucket for source documents (used when CreateS3Buckets is No).
+
+  ExistingTranscriptionsBucketName:
+    Type: String
+    Default: 'axiom-transcriptions'
+    Description: Name of existing S3 bucket for Transcribe output (used when CreateS3Buckets is No).
+
+  ExistingAudioBucketName:
+    Type: String
+    Default: 'axiom-audio'
+    Description: Name of existing S3 bucket for Polly audio output (used when CreateS3Buckets is No).
+
+  ExistingTextractBucketName:
+    Type: String
+    Default: 'axiom-textract-results'
+    Description: Name of existing S3 bucket for Textract OCR output (used when CreateS3Buckets is No).
+
   IncludeElastiCache:
     Type: String
     Default: 'No'
@@ -111,6 +144,7 @@ Parameters:
 
 Conditions:
   CreateElastiCache: !Equals [!Ref IncludeElastiCache, 'Yes']
+  CreateBuckets: !Equals [!Ref CreateS3Buckets, 'Yes']
 
 Resources:
 
@@ -227,6 +261,11 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
           Description: HTTP (Certbot ACME challenge)
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+          Description: FastAPI Backend API (Direct Access)
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
@@ -370,10 +409,11 @@ Resources:
         - Key: Name
           Value: !Sub '${ProjectName}-redis'
 
-  # ── S3 Buckets ────────────────────────────────────────────────────────────
+  # ── S3 Buckets (Optional Creation) ────────────────────────────────────────
 
   SourceDocsBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateBuckets
     DeletionPolicy: Retain
     Properties:
       BucketName: !Sub '${ProjectName}-source-docs-${AWS::AccountId}'
@@ -385,6 +425,7 @@ Resources:
 
   TranscriptionsBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateBuckets
     DeletionPolicy: Retain
     Properties:
       BucketName: !Sub '${ProjectName}-transcriptions-${AWS::AccountId}'
@@ -396,6 +437,7 @@ Resources:
 
   AudioBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateBuckets
     DeletionPolicy: Retain
     Properties:
       BucketName: !Sub '${ProjectName}-audio-${AWS::AccountId}'
@@ -407,6 +449,7 @@ Resources:
 
   TextractBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateBuckets
     DeletionPolicy: Retain
     Properties:
       BucketName: !Sub '${ProjectName}-textract-${AWS::AccountId}'
@@ -469,11 +512,12 @@ Resources:
 
               pip3 install certbot || true
 
-              mkdir -p /home/ec2-user/app
+              cd /home/ec2-user
               if [ ! -d /home/ec2-user/app/.git ]; then
-                git clone -b ${GitBranchName} ${GitRepoURL} /home/ec2-user/app
+                rm -rf /home/ec2-user/app
+                git clone -b ${GitBranchName} ${GitRepoURL} /home/ec2-user/app || true
               else
-                cd /home/ec2-user/app && git fetch origin && git checkout ${GitBranchName} && git pull origin ${GitBranchName}
+                cd /home/ec2-user/app && git fetch origin && git checkout ${GitBranchName} && git pull origin ${GitBranchName} || true
               fi
 
               mkdir -p /home/ec2-user/app/backend
@@ -511,8 +555,8 @@ Resources:
               CORS_ORIGINS=${CORSValue}
               UPLOAD_MAX_BYTES=52428800
 
-              ENABLE_DEMO_AUTH=false
-              RUN_SEED_ON_STARTUP=false
+              ENABLE_DEMO_AUTH=true
+              RUN_SEED_ON_STARTUP=true
               ENVEOF
 
               chown -R ec2-user:ec2-user /home/ec2-user/app
@@ -530,10 +574,10 @@ Resources:
               Region: !Ref AWS::Region
               JWTKey: !Ref JWTSecretKey
               CORSValue: !Ref CORSOrigins
-              SourceBucket: !Ref SourceDocsBucket
-              TranscribeBucket: !Ref TranscriptionsBucket
-              TextractBucketName: !Ref TextractBucket
-              AudioBucketName: !Ref AudioBucket
+              SourceBucket: !If [CreateBuckets, !Ref SourceDocsBucket, !Ref ExistingSourceDocsBucketName]
+              TranscribeBucket: !If [CreateBuckets, !Ref TranscriptionsBucket, !Ref ExistingTranscriptionsBucketName]
+              TextractBucketName: !If [CreateBuckets, !Ref TextractBucket, !Ref ExistingTextractBucketName]
+              AudioBucketName: !If [CreateBuckets, !Ref AudioBucket, !Ref ExistingAudioBucketName]
               GitRepoURL: !Ref GitRepositoryURL
               GitBranchName: !Ref GitBranch
 
@@ -569,16 +613,16 @@ Outputs:
 
   SourceDocsBucketName:
     Description: S3 bucket for source documents
-    Value: !Ref SourceDocsBucket
+    Value: !If [CreateBuckets, !Ref SourceDocsBucket, !Ref ExistingSourceDocsBucketName]
 
   TranscriptionsBucketName:
     Description: S3 bucket for Transcribe output
-    Value: !Ref TranscriptionsBucket
+    Value: !If [CreateBuckets, !Ref TranscriptionsBucket, !Ref ExistingTranscriptionsBucketName]
 
   AudioBucketName:
     Description: S3 bucket for Polly audio output
-    Value: !Ref AudioBucket
+    Value: !If [CreateBuckets, !Ref AudioBucket, !Ref ExistingAudioBucketName]
 
   TextractBucketName:
     Description: S3 bucket for Textract OCR output
-    Value: !Ref TextractBucket
+    Value: !If [CreateBuckets, !Ref TextractBucket, !Ref ExistingTextractBucketName]

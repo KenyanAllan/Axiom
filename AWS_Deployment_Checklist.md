@@ -68,6 +68,7 @@
 - [ ] Security group inbound rules:
   - `443` (HTTPS) from `0.0.0.0/0`
   - `80` (HTTP, for Certbot challenge) from `0.0.0.0/0`
+  - `8000` (FastAPI API) from `0.0.0.0/0`
   - `22` (SSH) from your IP only
 - [ ] Allocate and associate an **Elastic IP**
 - [ ] SSH in and install: `docker`, `docker-compose`, `certbot`
