@@ -1,0 +1,89 @@
+{
+  "family": "axiom-backend-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/axiom-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/axiom-ecs-task-role",
+  "containerDefinitions": [
+    {
+      "name": "api",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/axiom-backend:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "ENVIRONMENT", "value": "production" },
+        { "name": "LOG_LEVEL", "value": "info" },
+        { "name": "AWS_DEFAULT_REGION", "value": "us-east-1" },
+        { "name": "BEDROCK_MODEL_ID", "value": "anthropic.claude-sonnet-4-6" },
+        { "name": "BEDROCK_EMBED_MODEL_ID", "value": "amazon.titan-embed-text-v2:0" },
+        { "name": "S3_BUCKET_NAME", "value": "axiom-source-documents" },
+        { "name": "TRANSCRIBE_OUTPUT_BUCKET", "value": "axiom-transcriptions" },
+        { "name": "TEXTRACT_OUTPUT_BUCKET", "value": "axiom-textract-results" },
+        { "name": "POLLY_OUTPUT_BUCKET", "value": "axiom-audio" },
+        { "name": "POLLY_VOICE_ID", "value": "Matthew" },
+        { "name": "POLLY_ENGINE", "value": "neural" },
+        { "name": "TRANSLATE_TERMINOLOGY_NAME", "value": "axiom-stem-terms" },
+        { "name": "COMPREHEND_LANGUAGE_CODE", "value": "en" },
+        { "name": "ENABLE_DEMO_AUTH", "value": "true" },
+        { "name": "RUN_SEED_ON_STARTUP", "value": "true" },
+        { "name": "PYTHONPATH", "value": "/app" }
+      ],
+      "command": [
+        "bash",
+        "/app/scripts/start.sh"
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/axiom-backend",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "api"
+        }
+      }
+    },
+    {
+      "name": "worker",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/axiom-backend:latest",
+      "essential": false,
+      "environment": [
+        { "name": "ENVIRONMENT", "value": "production" },
+        { "name": "AWS_DEFAULT_REGION", "value": "us-east-1" },
+        { "name": "BEDROCK_MODEL_ID", "value": "anthropic.claude-sonnet-4-6" },
+        { "name": "BEDROCK_EMBED_MODEL_ID", "value": "amazon.titan-embed-text-v2:0" },
+        { "name": "S3_BUCKET_NAME", "value": "axiom-source-documents" },
+        { "name": "TRANSCRIBE_OUTPUT_BUCKET", "value": "axiom-transcriptions" },
+        { "name": "TEXTRACT_OUTPUT_BUCKET", "value": "axiom-textract-results" },
+        { "name": "POLLY_OUTPUT_BUCKET", "value": "axiom-audio" },
+        { "name": "PYTHONPATH", "value": "/app" }
+      ],
+      "command": [
+        "celery",
+        "-A",
+        "app.workers.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=2",
+        "-Q",
+        "ingestion,default"
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/axiom-backend",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "worker"
+        }
+      }
+    }
+  ]
+}

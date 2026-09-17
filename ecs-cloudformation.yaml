@@ -1,0 +1,264 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Axiom Learning Platform — AWS ECS Fargate infrastructure.
+  Provisions ECS Cluster, Fargate Task Definition, ALB (Load Balancer), Target Group,
+  ECR Repository, IAM Task & Execution Roles, and CloudWatch Logs.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: axiom
+    Description: Project name prefix.
+
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where ECS tasks and ALB will run.
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public Subnet IDs for ALB and ECS tasks.
+
+  DatabaseURL:
+    Type: String
+    NoEcho: true
+    Description: Aurora / RDS PostgreSQL connection URL (postgresql+asyncpg://...).
+
+  SyncDatabaseURL:
+    Type: String
+    NoEcho: true
+    Description: Synchronous PostgreSQL connection URL for migrations (postgresql+psycopg2://...).
+
+  RedisURL:
+    Type: String
+    Default: 'redis://localhost:6379/0'
+    Description: Redis URL for Celery worker task broker.
+
+  JWTSecretKey:
+    Type: String
+    NoEcho: true
+    Description: Random 64-character JWT secret key.
+
+  CORSOrigins:
+    Type: String
+    Default: '*'
+    Description: Comma-separated CORS allowed origins.
+
+Resources:
+
+  # ── ECR Repository ────────────────────────────────────────────────────────
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectName}-backend'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # ── CloudWatch Log Group ──────────────────────────────────────────────────
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${ProjectName}-backend'
+      RetentionInDays: 14
+
+  # ── Security Groups ───────────────────────────────────────────────────────
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectName} ALB security group'
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  ECSTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ProjectName} ECS Task security group'
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  # ── IAM Roles ─────────────────────────────────────────────────────────────
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonTextractFullAccess
+        - arn:aws:iam::aws:policy/AmazonRekognitionReadOnlyAccess
+        - arn:aws:iam::aws:policy/TranslateFullAccess
+        - arn:aws:iam::aws:policy/ComprehendReadOnly
+      Policies:
+        - PolicyName: TranscribeAndPollyAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - transcribe:*
+                  - polly:*
+                Resource: '*'
+
+  # ── ECS Cluster ───────────────────────────────────────────────────────────
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${ProjectName}-cluster'
+
+  # ── Application Load Balancer & Target Group ──────────────────────────────
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${ProjectName}-alb'
+      Scheme: internet-facing
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${ProjectName}-tg'
+      Port: 8000
+      Protocol: HTTP
+      VpcId: !Ref VPCId
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 15
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+
+  ALBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  # ── ECS Task Definition ───────────────────────────────────────────────────
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-backend-task'
+      Cpu: '1024'
+      Memory: '2048'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: api
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-backend:latest'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+              HostPort: 8000
+          Environment:
+            - Name: DATABASE_URL
+              Value: !Ref DatabaseURL
+            - Name: SYNC_DATABASE_URL
+              Value: !Ref SyncDatabaseURL
+            - Name: REDIS_URL
+              Value: !Ref RedisURL
+            - Name: JWT_SECRET_KEY
+              Value: !Ref JWTSecretKey
+            - Name: CORS_ORIGINS
+              Value: !Ref CORSOrigins
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+            - Name: BEDROCK_MODEL_ID
+              Value: anthropic.claude-sonnet-4-6
+            - Name: BEDROCK_EMBED_MODEL_ID
+              Value: amazon.titan-embed-text-v2:0
+            - Name: S3_BUCKET_NAME
+              Value: axiom-source-documents
+            - Name: TRANSCRIBE_OUTPUT_BUCKET
+              Value: axiom-transcriptions
+            - Name: TEXTRACT_OUTPUT_BUCKET
+              Value: axiom-textract-results
+            - Name: POLLY_OUTPUT_BUCKET
+              Value: axiom-audio
+            - Name: ENABLE_DEMO_AUTH
+              Value: 'true'
+            - Name: RUN_SEED_ON_STARTUP
+              Value: 'true'
+            - Name: PYTHONPATH
+              Value: /app
+          Command:
+            - bash
+            - /app/scripts/start.sh
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: api
+
+  # ── ECS Service ───────────────────────────────────────────────────────────
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: ALBListenerHTTP
+    Properties:
+      ServiceName: !Sub '${ProjectName}-backend-service'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref ECSTaskSecurityGroup
+      LoadBalancers:
+        - ContainerName: api
+          ContainerPort: 8000
+          TargetGroupArn: !Ref ALBTargetGroup
+
+Outputs:
+  ECRRepositoryURI:
+    Description: ECR Repository URI for building and pushing Docker image
+    Value: !GetAtt ECRRepository.RepositoryUri
+
+  ALBURL:
+    Description: Load Balancer DNS Name for backend API calls
+    Value: !Sub 'http://${ALB.DNSName}'
+
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
