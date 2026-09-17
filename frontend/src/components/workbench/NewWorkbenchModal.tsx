@@ -68,7 +68,7 @@ export function NewWorkbenchModal({
       for (const file of files) {
         await uploadSourceDoc(userId, file, workbench.id);
       }
-      onCreated();
+      onCreated(workbench);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create workbench.");
     } finally {

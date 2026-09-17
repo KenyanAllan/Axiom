@@ -25,9 +25,22 @@ async def _verify_workspace_access(
     workspace = result.scalar_one_or_none()
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workbench not found")
-    if workspace.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not your workbench")
-    return workspace
+    if workspace.user_id == user_id:
+        return workspace
+    if workspace.classroom_id is not None:
+        from app.models.tables import Classroom, ClassroomStudent
+        classroom = await db.get(Classroom, workspace.classroom_id)
+        if classroom and classroom.teacher_id == user_id:
+            return workspace
+        enrolled = await db.execute(
+            select(ClassroomStudent).where(
+                ClassroomStudent.classroom_id == workspace.classroom_id,
+                ClassroomStudent.student_id == user_id,
+            )
+        )
+        if enrolled.scalar_one_or_none() is not None:
+            return workspace
+    raise HTTPException(status_code=403, detail="Not your workbench")
 
 
 async def _build_figure_response(db: AsyncSession, figure: Figure) -> FigureResponse:

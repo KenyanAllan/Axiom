@@ -7,12 +7,22 @@ import logging
 from typing import Any
 
 import boto3
-from tenacity import retry, stop_after_attempt, wait_exponential
+from botocore.exceptions import ClientError
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Only retry transient Bedrock errors, not auth/validation failures."""
+    if isinstance(exc, ClientError):
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("AccessDeniedException", "ValidationException", "ResourceNotFoundException"):
+            return False
+    return True
 
 _bedrock_runtime: Any = None
 
@@ -54,7 +64,7 @@ Return ONLY the JSON object. No markdown fences, no preamble.
 """
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), retry=retry_if_exception(_is_retryable))
 def grade_response(
     claim_content: str,
     rubric: str,
@@ -72,21 +82,26 @@ def grade_response(
         f"## STUDENT RESPONSE\n{student_response}"
     )
 
-    response = client.converse(
-        modelId=settings.bedrock_model_id,
-        system=[{"text": GRADING_SYSTEM_PROMPT}],
-        messages=[
-            {
-                "role": "user",
-                "content": [{"text": user_message}],
-            }
-        ],
-        inferenceConfig={
-            "maxTokens": 512,
-            "temperature": 0.0,
-            "topP": 0.9,
-        },
-    )
+    try:
+        response = client.converse(
+            modelId=settings.bedrock_model_id,
+            system=[{"text": GRADING_SYSTEM_PROMPT}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [{"text": user_message}],
+                }
+            ],
+            inferenceConfig={
+                "maxTokens": 512,
+                "temperature": 0.0,
+                "topP": 0.9,
+            },
+        )
+    except ClientError as exc:
+        logger.error("Bedrock grade_response failed: %s: %s (model=%s, region=%s)",
+                      type(exc).__name__, exc, settings.bedrock_model_id, settings.aws_default_region)
+        raise
 
     # Extract text from the Converse response structure
     output_message = response["output"]["message"]
@@ -124,7 +139,7 @@ def grade_response(
 
 # ─── Activity generation via Converse API ─────────────────────────────────────────
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), retry=retry_if_exception(_is_retryable))
 def generate_activity(
     system_prompt: str,
     claim_title: str,
@@ -287,7 +302,7 @@ AUDIO_SCRIPT_PROMPTS: dict[str, str] = {
 }
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), retry=retry_if_exception(_is_retryable))
 def generate_audio_script(
     style: str,
     topics_text: str,
@@ -362,12 +377,17 @@ def call_bedrock_converse_stream(
     if tool_config is not None:
         kwargs["toolConfig"] = tool_config
 
-    return client.converse_stream(**kwargs)
+    try:
+        return client.converse_stream(**kwargs)
+    except ClientError as exc:
+        logger.error("Bedrock converse_stream failed: %s: %s (model=%s, region=%s)",
+                      type(exc).__name__, exc, settings.bedrock_model_id, settings.aws_default_region)
+        raise
 
 
 # ─── Embeddings via Titan Embeddings v2 ─────────────────────────────────────────
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), retry=retry_if_exception(_is_retryable))
 def generate_embedding(text: str) -> list[float]:
     """Generate a 1024-dim embedding using Amazon Titan Embeddings v2."""
     client = _get_client()

@@ -67,7 +67,7 @@ class SourceResponse(BaseModel):
 async def _verify_workspace_access(
     db: AsyncSession, workspace_id: int, user_id: str
 ) -> Workspace:
-    """Return the workspace if the user owns it, else 403/404."""
+    """Return the workspace if the user owns it or is in the linked classroom, else 403/404."""
     result = await db.execute(
         select(Workspace).where(Workspace.id == workspace_id)
     )
@@ -75,10 +75,23 @@ async def _verify_workspace_access(
     if workspace is None:
         logger.warning("Workbench not found: workspace_id=%d", workspace_id)
         raise HTTPException(status_code=404, detail="Workbench not found")
-    if workspace.user_id != user_id:
-        logger.warning("Workbench access denied: workspace_id=%d, user_id=%s", workspace_id, user_id)
-        raise HTTPException(status_code=403, detail="Not your workbench")
-    return workspace
+    if workspace.user_id == user_id:
+        return workspace
+    if workspace.classroom_id is not None:
+        from app.models.tables import Classroom, ClassroomStudent
+        classroom = await db.get(Classroom, workspace.classroom_id)
+        if classroom and classroom.teacher_id == user_id:
+            return workspace
+        enrolled = await db.execute(
+            select(ClassroomStudent).where(
+                ClassroomStudent.classroom_id == workspace.classroom_id,
+                ClassroomStudent.student_id == user_id,
+            )
+        )
+        if enrolled.scalar_one_or_none() is not None:
+            return workspace
+    logger.warning("Workbench access denied: workspace_id=%d, user_id=%s", workspace_id, user_id)
+    raise HTTPException(status_code=403, detail="Not your workbench")
 
 
 async def _count_claims(db: AsyncSession, doc_id: int) -> int:

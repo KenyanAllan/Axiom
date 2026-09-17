@@ -30,6 +30,8 @@ import {
   getChatSession,
   createChatSession,
   deleteChatSession,
+  WORKSPACE_KEY,
+  getWorkspaceId,
 } from "@/lib/api";
 import { XP_BY_TYPE } from "@/components/activity/ActivityFeed";
 
@@ -50,6 +52,14 @@ export default function Home() {
   const [studentView, setStudentView] = useState(false);
   const [reviewingActivity, setReviewingActivity] = useState<CompletedActivityReview | null>(null);
   const [pendingSourceDocId, setPendingSourceDocId] = useState<string | null>(null);
+
+  // ── Workbench state (lifted from LeftSidebar) ────────────────────────────
+  const [activeWorkbenchId, setActiveWorkbenchId] = useState<number | null>(null);
+
+  const handleWorkbenchChange = useCallback((id: number) => {
+    setActiveWorkbenchId(id);
+    localStorage.setItem(WORKSPACE_KEY, String(id));
+  }, []);
 
   // ── Chat session state ────────────────────────────────────────────────────
   const [sessions, setSessions] = useState<ChatSession[]>([SEED_SESSION]);
@@ -74,8 +84,10 @@ export default function Home() {
 
   // ── Load chat sessions from API ─────────────────────────────────────────
   useEffect(() => {
-    if (!user?.id) return;
-    listChatSessions(user.id)
+    if (!user?.id || activeWorkbenchId == null) return;
+    setSessions([SEED_SESSION]);
+    setActiveSessionId("seed");
+    listChatSessions(user.id, activeWorkbenchId)
       .then(async (apiSessions) => {
         if (apiSessions.length === 0) return;
         const loaded: ChatSession[] = await Promise.all(
@@ -112,12 +124,13 @@ export default function Home() {
         }
       })
       .catch((err) => console.error("page.tsx: failed to load chat sessions:", err));
-  }, [user?.id]);
+  }, [user?.id, activeWorkbenchId]);
 
   // ── Load activity feed + queue from API ──────────────────────────────────
   useEffect(() => {
-    if (!user?.id) return;
-    const loadFeed = fetchActivityFeed(user.id)
+    if (!user?.id || activeWorkbenchId == null) return;
+    const wsId = activeWorkbenchId;
+    const loadFeed = fetchActivityFeed(user.id, wsId)
       .then((data) =>
         data.cards.map((card): Activity => {
           const dt = mapBackendType(card.diagnostic_type) as Activity["type"];
@@ -132,7 +145,7 @@ export default function Home() {
       )
       .catch((err) => { console.error("page.tsx: failed to load activity feed:", err); return [] as Activity[]; });
 
-    const loadQueue = fetchActivityQueue(user.id)
+    const loadQueue = fetchActivityQueue(user.id, wsId)
       .then((data) =>
         data.entries
           .filter((e) => !e.is_completed)
@@ -163,12 +176,12 @@ export default function Home() {
         setActivities(merged);
       }
     });
-  }, [user?.id]);
+  }, [user?.id, activeWorkbenchId]);
 
   // ── Load topics + claims for wiki ───────────────────────────────────────
   useEffect(() => {
-    if (!user?.id) return;
-    Promise.all([fetchTopics(user.id), fetchClaims(user.id)])
+    if (!user?.id || activeWorkbenchId == null) return;
+    Promise.all([fetchTopics(user.id, activeWorkbenchId), fetchClaims(user.id, activeWorkbenchId)])
       .then(([topics, claims]) => {
         if (topics.length === 0) return;
         const pages: WikiPage[] = topics.map((t) => {
@@ -191,7 +204,7 @@ export default function Home() {
         setWikiPages(pages);
       })
       .catch((err) => console.error("page.tsx: failed to load topics/claims for wiki:", err));
-  }, [user?.id]);
+  }, [user?.id, activeWorkbenchId]);
 
   const handleLogout = () => {
     logout();
@@ -296,6 +309,8 @@ export default function Home() {
           onTabChange={setActiveTab}
           studentView={studentView}
           onToggleStudentView={handleToggleStudentView}
+          activeWorkbenchId={activeWorkbenchId}
+          onWorkbenchChange={handleWorkbenchChange}
         />
         <NavPanel
           activeTab={activeTab}

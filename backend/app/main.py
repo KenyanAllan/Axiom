@@ -98,6 +98,33 @@ app.include_router(figures_router)
 
 
 @app.on_event("startup")
+async def startup_bedrock_check():
+    """Verify Bedrock connectivity at startup so misconfigurations surface in logs immediately."""
+    try:
+        from app.services.bedrock import _get_client
+        client = _get_client()
+        client.converse(
+            modelId=settings.bedrock_model_id,
+            messages=[{"role": "user", "content": [{"text": "ping"}]}],
+            inferenceConfig={"maxTokens": 1},
+        )
+        logger.info(
+            "Bedrock OK: model=%s region=%s",
+            settings.bedrock_model_id,
+            settings.aws_default_region,
+        )
+    except Exception as exc:
+        logger.error(
+            "Bedrock FAILED: model=%s region=%s error=%s: %s  "
+            "— If AccessDeniedException, enable model access in the Bedrock console.",
+            settings.bedrock_model_id,
+            settings.aws_default_region,
+            type(exc).__name__,
+            exc,
+        )
+
+
+@app.on_event("startup")
 async def startup_db_init():
     if settings.database_url.startswith("sqlite"):
         try:
@@ -143,8 +170,26 @@ async def health():
         logger.warning("Health check: Redis unavailable: %s", exc)
         checks["redis"] = "unavailable"
 
+    try:
+        from app.services.bedrock import _get_client
+        client = _get_client()
+        client.converse(
+            modelId=settings.bedrock_model_id,
+            messages=[{"role": "user", "content": [{"text": "ping"}]}],
+            inferenceConfig={"maxTokens": 1},
+        )
+        checks["bedrock"] = "ok"
+    except Exception as exc:
+        logger.warning("Health check: Bedrock unavailable: %s: %s", type(exc).__name__, exc)
+        checks["bedrock"] = f"unavailable ({type(exc).__name__})"
+
     all_ok = all(v == "ok" for v in checks.values())
     return JSONResponse(
         status_code=200,
-        content={"status": "healthy" if all_ok else "degraded", "checks": checks},
+        content={
+            "status": "healthy" if all_ok else "degraded",
+            "checks": checks,
+            "bedrock_model_id": settings.bedrock_model_id,
+            "aws_region": settings.aws_default_region,
+        },
     )
