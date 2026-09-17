@@ -73,8 +73,14 @@
 - [ ] SSH in and install: `docker`, `docker-compose`, `certbot`
 - [ ] Set up the sslip.io domain: `<your-elastic-ip>.sslip.io`
 - [ ] Run Certbot: `sudo certbot certonly --standalone -d <elastic-ip>.sslip.io`
-- [ ] Clone the repo onto the instance
-- [ ] Create `/backend/.env` from `.env.example` with **production values**:
+- [ ] **Automatic Bootstrap via CloudFormation:** When deploying via `cloudformation.yaml`, EC2 automatically clones the repository from `GitRepositoryURL`, generates `/backend/.env`, and executes `/home/ec2-user/app/backend/scripts/deploy_ec2.sh` to build and start the Docker containers.
+- [ ] **Manual SSH Deployment / Update Script:** To pull latest updates or re-deploy manually:
+  ```bash
+  cd /home/ec2-user/app/backend
+  chmod +x scripts/deploy_ec2.sh
+  ./scripts/deploy_ec2.sh
+  ```
+- [ ] Create `/backend/.env` from `.env.example` with **production values** (if deploying manually without CloudFormation):
   ```env
   # ── Database ──────────────────────────────────────────────────
   DATABASE_URL=postgresql+asyncpg://<user>:<pass>@<aurora-endpoint>:5432/axiom
@@ -105,6 +111,7 @@
   # ── S3 Buckets ───────────────────────────────────────────────
   S3_BUCKET_NAME=axiom-source-documents
   TRANSCRIBE_OUTPUT_BUCKET=axiom-transcriptions
+  TEXTRACT_OUTPUT_BUCKET=axiom-textract-results
   POLLY_OUTPUT_BUCKET=axiom-audio
   POLLY_VOICE_ID=Matthew
   POLLY_ENGINE=neural
@@ -143,7 +150,7 @@
         commands:
           - npm run build
     artifacts:
-      baseDirectory: .next
+      baseDirectory: out
       files:
         - '**/*'
     cache:

@@ -334,6 +334,37 @@ def generate_audio_script(
         return {"script": raw_text, "question": ""}
 
 
+# ─── Streaming Converse API ──────────────────────────────────────────────────────
+
+
+def call_bedrock_converse_stream(
+    messages: list[dict],
+    tool_config: dict | None = None,
+    system_prompt: str | None = None,
+) -> dict:
+    """Call Bedrock converse_stream (synchronous, returns an EventStream iterator).
+
+    The caller iterates ``response["stream"]`` to receive incremental events.
+    No @retry — a half-consumed stream cannot be replayed.
+    """
+    client = _get_client()
+
+    kwargs: dict[str, Any] = {
+        "modelId": settings.bedrock_model_id,
+        "system": [{"text": system_prompt}] if system_prompt else [],
+        "messages": messages,
+        "inferenceConfig": {
+            "maxTokens": 2048,
+            "temperature": 0.3,
+            "topP": 0.9,
+        },
+    }
+    if tool_config is not None:
+        kwargs["toolConfig"] = tool_config
+
+    return client.converse_stream(**kwargs)
+
+
 # ─── Embeddings via Titan Embeddings v2 ─────────────────────────────────────────
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))

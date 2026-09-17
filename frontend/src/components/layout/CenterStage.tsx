@@ -1020,7 +1020,7 @@ export function CenterStage({
           />
         </TabsContent>
 
-        <TabsContent value="nodemap" className="flex flex-1 flex-col overflow-hidden">
+        <TabsContent value="nodemap" className="flex-1 overflow-hidden">
           <DemoNodeMapTab nodes={graphNodes} onNodeClick={handleNodeClick} />
         </TabsContent>
 

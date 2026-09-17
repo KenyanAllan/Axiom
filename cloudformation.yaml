@@ -20,7 +20,7 @@ Metadata:
       - Label: { default: 'Database' }
         Parameters: [DBMasterUsername, DBMasterPassword, DBInstanceClass]
       - Label: { default: 'Application' }
-        Parameters: [JWTSecretKey, CORSOrigins]
+        Parameters: [JWTSecretKey, CORSOrigins, GitRepositoryURL, GitBranch]
       - Label: { default: 'Optional Services' }
         Parameters: [IncludeElastiCache]
     ParameterLabels:
@@ -33,6 +33,8 @@ Metadata:
       DBInstanceClass: { default: 'RDS instance type' }
       JWTSecretKey: { default: 'JWT signing secret' }
       CORSOrigins: { default: 'Allowed CORS origins' }
+      GitRepositoryURL: { default: 'GitHub repository URL' }
+      GitBranch: { default: 'Git branch to deploy' }
       IncludeElastiCache: { default: 'Deploy ElastiCache Redis?' }
 
 Parameters:
@@ -90,6 +92,16 @@ Parameters:
     Type: String
     Default: '*'
     Description: Comma-separated origins. Update to your Amplify URL after frontend deploy.
+
+  GitRepositoryURL:
+    Type: String
+    Default: 'https://github.com/KenyanAllan/Axiom.git'
+    Description: GitHub repository URL to clone and deploy.
+
+  GitBranch:
+    Type: String
+    Default: 'main'
+    Description: Git branch to clone and deploy.
 
   IncludeElastiCache:
     Type: String
@@ -443,7 +455,7 @@ Resources:
 
               echo "=== Axiom EC2 bootstrap starting ==="
               dnf update -y
-              dnf install -y docker git
+              dnf install -y docker git python3-pip
 
               systemctl enable docker
               systemctl start docker
@@ -457,13 +469,20 @@ Resources:
 
               pip3 install certbot || true
 
+              mkdir -p /home/ec2-user/app
+              if [ ! -d /home/ec2-user/app/.git ]; then
+                git clone -b ${GitBranchName} ${GitRepoURL} /home/ec2-user/app
+              else
+                cd /home/ec2-user/app && git fetch origin && git checkout ${GitBranchName} && git pull origin ${GitBranchName}
+              fi
+
               mkdir -p /home/ec2-user/app/backend
               cat > /home/ec2-user/app/backend/.env << 'ENVEOF'
               DATABASE_URL=postgresql+asyncpg://${DBUser}:${DBPass}@${DBEndpoint}:5432/axiom
               SYNC_DATABASE_URL=postgresql+psycopg2://${DBUser}:${DBPass}@${DBEndpoint}:5432/axiom
               DATABASE_SSL=true
 
-              REDIS_URL=redis://localhost:6379/0
+              REDIS_URL=${RedisURL}
 
               AWS_DEFAULT_REGION=${Region}
               AWS_ACCESS_KEY_ID=
@@ -498,10 +517,16 @@ Resources:
 
               chown -R ec2-user:ec2-user /home/ec2-user/app
 
+              if [ -f /home/ec2-user/app/backend/scripts/deploy_ec2.sh ]; then
+                chmod +x /home/ec2-user/app/backend/scripts/deploy_ec2.sh
+                /home/ec2-user/app/backend/scripts/deploy_ec2.sh ${GitRepoURL} ${GitBranchName} || true
+              fi
+
               echo "=== Axiom EC2 bootstrap complete ==="
             - DBUser: !Ref DBMasterUsername
               DBPass: !Ref DBMasterPassword
               DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
+              RedisURL: !If [CreateElastiCache, !Sub 'redis://${RedisCluster.RedisEndpoint.Address}:6379/0', 'redis://localhost:6379/0']
               Region: !Ref AWS::Region
               JWTKey: !Ref JWTSecretKey
               CORSValue: !Ref CORSOrigins
@@ -509,6 +534,8 @@ Resources:
               TranscribeBucket: !Ref TranscriptionsBucket
               TextractBucketName: !Ref TextractBucket
               AudioBucketName: !Ref AudioBucket
+              GitRepoURL: !Ref GitRepositoryURL
+              GitBranchName: !Ref GitBranch
 
   EIPAssociation:
     Type: AWS::EC2::EIPAssociation
