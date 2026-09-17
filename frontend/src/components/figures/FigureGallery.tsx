@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ImageIcon } from "lucide-react";
 import type { Figure } from "@/lib/types";
 import type { UserRole } from "@/lib/types";
@@ -36,24 +36,26 @@ export default function FigureGallery({
 
   const canDelete = userRole != null && userRole !== "student";
 
-  const loadUrls = useCallback(async () => {
-    const newUrls: Record<number, string> = {};
-    await Promise.all(
-      figures.map(async (fig) => {
-        try {
-          const { url } = await getFigureViewUrl(userId, fig.id);
-          newUrls[fig.id] = url;
-        } catch {
-          // skip failed URLs
-        }
-      })
-    );
-    setUrls(newUrls);
-  }, [figures, userId]);
-
   useEffect(() => {
-    if (figures.length > 0) loadUrls();
-  }, [figures, loadUrls]);
+    if (figures.length === 0) return;
+    let cancelled = false;
+    const loadUrls = async () => {
+      const newUrls: Record<number, string> = {};
+      await Promise.all(
+        figures.map(async (fig) => {
+          try {
+            const { url } = await getFigureViewUrl(userId, fig.id);
+            newUrls[fig.id] = url;
+          } catch {
+            // skip failed URLs
+          }
+        })
+      );
+      if (!cancelled) setUrls(newUrls);
+    };
+    loadUrls();
+    return () => { cancelled = true; };
+  }, [figures, userId]);
 
   if (figures.length === 0) return null;
 

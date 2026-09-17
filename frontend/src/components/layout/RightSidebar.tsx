@@ -5,6 +5,7 @@ import { Flame, Trophy, ArrowLeft, Medal, Crown, ChevronDown, ChevronUp, Message
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import type { UserProfile, MasteryEntry, HistoryEvent, ClaimResponse, TopicSummary, ViewTab } from "@/lib/types";
+import { mapBackendType } from "@/lib/types";
 import type { CompletedActivityReview } from "@/components/activity/CompletedActivityReviewOverlay";
 import { formatXP } from "@/lib/utils";
 import {
@@ -239,7 +240,7 @@ function historyToTimeline(events: HistoryEvent[]): TimelineEntry[] {
     xp: e.xp_awarded,
     time: relativeTime(e.timestamp),
     activityId: e.claim_id,
-    activityType: (e as HistoryEvent & { activity_type?: string }).activity_type ?? "",
+    activityType: mapBackendType((e as HistoryEvent & { activity_type?: string }).activity_type ?? ""),
     studentResponse: e.student_response,
     feedback: e.feedback,
     outcome: e.outcome,

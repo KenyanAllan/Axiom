@@ -40,6 +40,13 @@ function headers(userId: string): HeadersInit {
   return { "Content-Type": "application/json", ...authOnly(userId) };
 }
 
+function handle401(res: Response): void {
+  if (res.status === 401 && typeof window !== "undefined") {
+    localStorage.removeItem(TOKEN_KEY);
+    window.location.href = "/login";
+  }
+}
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 export interface AuthResponse {
@@ -58,6 +65,7 @@ export async function authLogin(
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
+    handle401(res);
     const body = await res.json().catch(() => null);
     throw new Error(body?.detail ?? `Login failed: ${res.status}`);
   }
@@ -100,7 +108,7 @@ export async function synthesizeSpeech(
     headers: headers(userId),
     body: JSON.stringify({ text }),
   });
-  if (!res.ok) throw new Error(`Synthesize failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Synthesize failed: ${res.status}`); }
   return res.json();
 }
 
@@ -115,7 +123,7 @@ export async function updateUserProfile(
     headers: headers(userId),
     body: JSON.stringify(patch),
   });
-  if (!res.ok) throw new Error(`Profile update failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Profile update failed: ${res.status}`); }
   return res.json();
 }
 
@@ -130,7 +138,7 @@ export async function fetchActivityFeed(
     `${BASE}/api/activities/feed?limit=${limit}&offset=${offset}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Feed fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Feed fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -143,7 +151,7 @@ export async function evaluateResponse(
     headers: headers(userId),
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Evaluate failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Evaluate failed: ${res.status}`); }
   return res.json();
 }
 
@@ -156,7 +164,7 @@ export async function submitAttempt(
     headers: headers(userId),
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Attempt failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Attempt failed: ${res.status}`); }
   return res.json();
 }
 
@@ -169,7 +177,7 @@ export async function fetchActivityQueue(
     `${BASE}/api/activities/queue?limit=${limit}&offset=${offset}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Queue fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Queue fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -181,7 +189,7 @@ export async function fetchFrontier(
   const res = await fetch(`${BASE}/api/frontier`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Frontier fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Frontier fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -193,7 +201,7 @@ export async function fetchUserProfile(
   const res = await fetch(`${BASE}/api/users/me`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`User profile fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`User profile fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -203,7 +211,7 @@ export async function fetchUserMastery(
   const res = await fetch(`${BASE}/api/users/me/mastery`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Mastery fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Mastery fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -213,7 +221,7 @@ export async function fetchUserHistory(
   const res = await fetch(`${BASE}/api/users/me/history`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`History fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`History fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -227,7 +235,7 @@ export async function fetchTopics(
     `${BASE}/api/topics?workspace_id=${workspaceId}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Topics fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Topics fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -239,7 +247,7 @@ export async function fetchClaims(
     `${BASE}/api/claims?workspace_id=${workspaceId}&limit=200`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Claims fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Claims fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -254,7 +262,7 @@ export async function createTopic(
     headers: headers(userId),
     body: JSON.stringify({ workspace_id: workspaceId, title, summary: summary || null }),
   });
-  if (!res.ok) throw new Error(`Create topic failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Create topic failed: ${res.status}`); }
   return res.json();
 }
 
@@ -268,7 +276,7 @@ export async function updateTopic(
     headers: headers(userId),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`Update topic failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Update topic failed: ${res.status}`); }
   return res.json();
 }
 
@@ -280,7 +288,7 @@ export async function deleteTopic(
     method: "DELETE",
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Delete topic failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Delete topic failed: ${res.status}`); }
 }
 
 export async function createClaim(
@@ -295,7 +303,7 @@ export async function createClaim(
     headers: headers(userId),
     body: JSON.stringify({ topic_id: topicId, title, content, rubric: rubric || null }),
   });
-  if (!res.ok) throw new Error(`Create claim failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Create claim failed: ${res.status}`); }
   return res.json();
 }
 
@@ -309,7 +317,7 @@ export async function updateClaim(
     headers: headers(userId),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`Update claim failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Update claim failed: ${res.status}`); }
   return res.json();
 }
 
@@ -321,7 +329,7 @@ export async function deleteClaim(
     method: "DELETE",
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Delete claim failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Delete claim failed: ${res.status}`); }
 }
 
 // ── Graph (node map) ──────────────────────────────────────────────────────────
@@ -333,7 +341,7 @@ export async function fetchGraph(
   const res = await fetch(`${BASE}/api/dag/graph?workspace_id=${workspaceId}`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Graph fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Graph fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -360,7 +368,7 @@ export async function listSourceDocs(
     `${BASE}/api/sources?workspace_id=${workspaceId}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`List sources failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`List sources failed: ${res.status}`); }
   const data: ApiSourceDocument[] = await res.json();
   return data.map(mapApiSource);
 }
@@ -379,7 +387,7 @@ export async function uploadSourceDoc(
     headers: authOnly(userId),
     body: form,
   });
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Upload failed: ${res.status}`); }
   const data: ApiSourceDocument = await res.json();
   return mapApiSource(data);
 }
@@ -392,7 +400,7 @@ export async function deleteSourceDoc(
     method: "DELETE",
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Delete failed: ${res.status}`); }
 }
 
 export interface ViewUrlResponse {
@@ -408,7 +416,7 @@ export async function getSourceViewUrl(
   const res = await fetch(`${BASE}/api/sources/${docId}/view-url`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Get view URL failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Get view URL failed: ${res.status}`); }
   return res.json();
 }
 
@@ -422,7 +430,7 @@ export async function listFigures(
     `${BASE}/api/figures?workspace_id=${workspaceId}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`List figures failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`List figures failed: ${res.status}`); }
   return res.json();
 }
 
@@ -434,7 +442,7 @@ export async function listFiguresBySource(
     `${BASE}/api/figures/by-source/${sourceDocId}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`List figures by source failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`List figures by source failed: ${res.status}`); }
   return res.json();
 }
 
@@ -446,7 +454,7 @@ export async function listFiguresByClaim(
     `${BASE}/api/figures/by-claim/${claimId}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`List figures by claim failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`List figures by claim failed: ${res.status}`); }
   return res.json();
 }
 
@@ -458,7 +466,7 @@ export async function getFigureViewUrl(
     `${BASE}/api/figures/${figureId}/view-url`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Get figure view URL failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Get figure view URL failed: ${res.status}`); }
   return res.json();
 }
 
@@ -470,7 +478,7 @@ export async function deleteFigure(
     `${BASE}/api/figures/${figureId}`,
     { method: "DELETE", headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Delete figure failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Delete figure failed: ${res.status}`); }
 }
 
 // ── Chat sessions ─────────────────────────────────────────────────────────────
@@ -485,7 +493,7 @@ export async function createChatSession(
     headers: headers(userId),
     body: JSON.stringify({ workspace_id: workspaceId, title: title ?? "New Chat" }),
   });
-  if (!res.ok) throw new Error(`Create chat session failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Create chat session failed: ${res.status}`); }
   return res.json();
 }
 
@@ -497,7 +505,7 @@ export async function listChatSessions(
     `${BASE}/api/chat/sessions?workspace_id=${workspaceId}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`List chat sessions failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`List chat sessions failed: ${res.status}`); }
   return res.json();
 }
 
@@ -508,7 +516,7 @@ export async function getChatSession(
   const res = await fetch(`${BASE}/api/chat/sessions/${sessionId}`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Get chat session failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Get chat session failed: ${res.status}`); }
   return res.json();
 }
 
@@ -520,7 +528,7 @@ export async function deleteChatSession(
     method: "DELETE",
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Delete chat session failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Delete chat session failed: ${res.status}`); }
 }
 
 export async function sendChatMessage(
@@ -541,7 +549,7 @@ export async function sendChatMessage(
       body: JSON.stringify(payload),
     }
   );
-  if (!res.ok) throw new Error(`Send message failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Send message failed: ${res.status}`); }
   return res.json();
 }
 
@@ -672,7 +680,7 @@ export async function fetchTeacherClassrooms(
   const res = await fetch(`${BASE}/api/classrooms`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Classrooms fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Classrooms fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -683,7 +691,7 @@ export async function fetchClassroomDetail(
   const res = await fetch(`${BASE}/api/classrooms/${classroomId}`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Classroom detail fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Classroom detail fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -695,7 +703,7 @@ export async function fetchClassroomDiagnostic(
     `${BASE}/api/classrooms/${classroomId}/diagnostic`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Diagnostic fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Diagnostic fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -708,7 +716,7 @@ export async function fetchStudentProgress(
     `${BASE}/api/classrooms/${classroomId}/students/${studentId}/progress`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Student progress fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Student progress fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -728,7 +736,7 @@ export async function fetchClassroomLeaderboard(
     `${BASE}/api/classrooms/${classroomId}/leaderboard`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Leaderboard fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Leaderboard fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -765,7 +773,7 @@ export async function fetchClassroomActivityHistory(
     `${BASE}/api/classrooms/${classroomId}/activity-history?limit=${limit}&offset=${offset}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Activity history fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Activity history fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -810,7 +818,7 @@ export async function fetchClassroomChatHistory(
     `${BASE}/api/classrooms/${classroomId}/chat-history?limit=${limit}&offset=${offset}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Chat history fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Chat history fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -823,7 +831,7 @@ export async function fetchClassroomChatSession(
     `${BASE}/api/classrooms/${classroomId}/chat-history/${sessionId}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Chat session fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Chat session fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -837,7 +845,7 @@ export async function fetchGlossaryTerms(
     `${BASE}/api/glossary?workspace_id=${workspaceId}`,
     { headers: headers(userId) }
   );
-  if (!res.ok) throw new Error(`Glossary fetch failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Glossary fetch failed: ${res.status}`); }
   return res.json();
 }
 
@@ -852,7 +860,7 @@ export async function searchGlossary(
     headers: headers(userId),
     body: JSON.stringify({ query, workspace_id: workspaceId, limit }),
   });
-  if (!res.ok) throw new Error(`Glossary search failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Glossary search failed: ${res.status}`); }
   return res.json();
 }
 
@@ -870,7 +878,7 @@ export async function createGlossaryTerm(
     headers: headers(userId),
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`Create glossary term failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Create glossary term failed: ${res.status}`); }
   return res.json();
 }
 
@@ -884,7 +892,7 @@ export async function updateGlossaryTerm(
     headers: headers(userId),
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`Update glossary term failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Update glossary term failed: ${res.status}`); }
   return res.json();
 }
 
@@ -896,7 +904,7 @@ export async function deleteGlossaryTerm(
     method: "DELETE",
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`Delete glossary term failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Delete glossary term failed: ${res.status}`); }
 }
 
 // ── Audio overview ──────────────────────────────────────────────────────────
@@ -928,7 +936,7 @@ export async function generateAudioOverview(
     headers: headers(userId),
     body: JSON.stringify({ workspace_id: body.workspace_id ?? DEMO_WORKSPACE_ID, ...body }),
   });
-  if (!res.ok) throw new Error(`Audio overview generation failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Audio overview generation failed: ${res.status}`); }
   return res.json();
 }
 
@@ -940,7 +948,7 @@ export async function listWorkbenches(
   const res = await fetch(`${BASE}/api/workspaces`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`List workbenches failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`List workbenches failed: ${res.status}`); }
   const data = await res.json();
   return data.workspaces;
 }
@@ -955,6 +963,6 @@ export async function createWorkbench(
     headers: headers(userId),
     body: JSON.stringify({ title, description: description || null }),
   });
-  if (!res.ok) throw new Error(`Create workbench failed: ${res.status}`);
+  if (!res.ok) { handle401(res); throw new Error(`Create workbench failed: ${res.status}`); }
   return res.json();
 }

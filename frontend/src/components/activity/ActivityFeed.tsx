@@ -1398,12 +1398,9 @@ function MythBusterActivity({ activity, userId, onDiscussWithTutor, onSaveResult
         onSaveResult?.({ lastResponse: response, lastFeedback: result });
       } else {
         await new Promise((r) => setTimeout(r, 1200));
-        const isCorrect = response.trim().length > 30;
         const fb = {
-          is_correct: isCorrect,
-          feedback: isCorrect
-            ? "Good catch! You correctly identified the flaw in the reasoning."
-            : "Not quite. Look more carefully at the assumptions being made.",
+          is_correct: false,
+          feedback: "We couldn't reach the server to evaluate your response. Your answer has been saved — try again later for feedback.",
         };
         setFeedback(fb);
         onSaveResult?.({ lastResponse: response, lastFeedback: fb });
@@ -1480,11 +1477,8 @@ function ScenarioActivity({ activity, userId, onDiscussWithTutor, onSaveResult }
       } else {
         await new Promise((r) => setTimeout(r, 1200));
         const fb = {
-          is_correct: response.trim().length > 40,
-          feedback:
-            response.trim().length > 40
-              ? "Strong analysis! You've correctly applied the relevant concepts to this scenario."
-              : "Try to be more thorough. Consider the constraints and how linear algebra applies here.",
+          is_correct: false,
+          feedback: "We couldn't reach the server to evaluate your response. Your answer has been saved — try again later for feedback.",
         };
         setFeedback(fb);
         onSaveResult?.({ lastResponse: response, lastFeedback: fb });
@@ -1548,11 +1542,8 @@ function FeynmanActivity({ activity, userId, onDiscussWithTutor, onSaveResult }:
       } else {
         await new Promise((r) => setTimeout(r, 1200));
         const fb = {
-          is_correct: response.trim().length > 30,
-          feedback:
-            response.trim().length > 30
-              ? "Great explanation! You demonstrate a solid grasp of the concept."
-              : "Your explanation is a bit brief. Try to explain it as if teaching someone who has never seen this before.",
+          is_correct: false,
+          feedback: "We couldn't reach the server to evaluate your response. Your answer has been saved — try again later for feedback.",
         };
         setFeedback(fb);
         onSaveResult?.({ lastResponse: response, lastFeedback: fb });
@@ -1724,11 +1715,8 @@ function MiniPodcastActivity({ activity, userId, onDiscussWithTutor, onSaveResul
       } else {
         await new Promise((r) => setTimeout(r, 1000));
         const fb = {
-          is_correct: response.trim().length > 20,
-          feedback:
-            response.trim().length > 20
-              ? "Good listening comprehension! You captured the key takeaways."
-              : "Try to provide more detail from the overview.",
+          is_correct: false,
+          feedback: "We couldn't reach the server to evaluate your response. Your answer has been saved — try again later for feedback.",
         };
         setFeedback(fb);
         onSaveResult?.({ lastResponse: response, lastFeedback: fb });
@@ -2203,10 +2191,8 @@ function FigureExplainActivity({ activity, userId, onDiscussWithTutor, onSaveRes
         onSaveResult?.({ lastResponse: response, lastFeedback: result });
       } else {
         const fb = {
-          is_correct: response.trim().length > 30,
-          feedback: response.trim().length > 30
-            ? "Good analysis of the figure!"
-            : "Try to provide a more detailed explanation of what the figure shows.",
+          is_correct: false,
+          feedback: "We couldn't reach the server to evaluate your response. Your answer has been saved — try again later for feedback.",
         };
         setFeedback(fb);
         onSaveResult?.({ lastResponse: response, lastFeedback: fb });

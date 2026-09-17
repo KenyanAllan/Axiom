@@ -116,7 +116,7 @@ class Workspace(Base):
     activities = relationship("Activity", back_populates="workspace", lazy="selectin")
     source_documents = relationship("SourceDocument", back_populates="workspace", lazy="selectin")
     glossary_terms = relationship("GlossaryTerm", back_populates="workspace", lazy="selectin")
-    figures = relationship("Figure", back_populates="workspace", lazy="selectin")
+    figures = relationship("Figure", back_populates="workspace")
 
 
 # ── Source Documents (Layer 1 Ground-Truth) ──────────────────────────────────
@@ -147,7 +147,7 @@ class SourceDocument(Base):
 
     workspace = relationship("Workspace", back_populates="source_documents")
     uploader = relationship("User")
-    figures = relationship("Figure", back_populates="source_document", lazy="selectin")
+    figures = relationship("Figure", back_populates="source_document")
 
 
 # ── Topics (WikiPages) ─────────────────────────────────────────────────────────

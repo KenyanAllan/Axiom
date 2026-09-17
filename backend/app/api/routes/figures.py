@@ -95,6 +95,9 @@ async def list_figures_by_claim(
         .order_by(FigureClaim.similarity_score.desc())
     )
     rows = (await db.execute(stmt)).scalars().all()
+    for f in rows:
+        await _verify_workspace_access(db, f.workspace_id, user_id)
+        break
     return [await _build_figure_response(db, f) for f in rows]
 
 
@@ -107,6 +110,7 @@ async def get_figure(
     figure = await db.get(Figure, figure_id)
     if figure is None:
         raise HTTPException(status_code=404, detail="Figure not found")
+    await _verify_workspace_access(db, figure.workspace_id, user_id)
     return await _build_figure_response(db, figure)
 
 
@@ -119,6 +123,7 @@ async def get_figure_view_url(
     figure = await db.get(Figure, figure_id)
     if figure is None:
         raise HTTPException(status_code=404, detail="Figure not found")
+    await _verify_workspace_access(db, figure.workspace_id, user_id)
     url = generate_download_url(figure.s3_key)
     return FigureViewUrlResponse(url=url, content_type=figure.content_type)
 
@@ -136,6 +141,7 @@ async def delete_figure(
     figure = await db.get(Figure, figure_id)
     if figure is None:
         raise HTTPException(status_code=404, detail="Figure not found")
+    await _verify_workspace_access(db, figure.workspace_id, user_id)
 
     try:
         delete_object(figure.s3_key)
