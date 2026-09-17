@@ -26,6 +26,7 @@ frontend/out/
 dist/
 build/
 *.egg-info/
+*.tsbuildinfo
 
 # OS
 .DS_Store
@@ -47,5 +48,3 @@ htmlcov/
 *.pem
 *.key
 credentials.json
-cloudformation.yaml
-.claude
