@@ -3,11 +3,12 @@
 import { useState, useRef, useCallback } from "react";
 import { X, Upload, FileText, Loader2 } from "lucide-react";
 import { createWorkbench, uploadSourceDoc } from "@/lib/api";
+import type { WorkbenchResponse } from "@/lib/types";
 
 interface NewWorkbenchModalProps {
   userId: string;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (workbench?: WorkbenchResponse) => void;
 }
 
 export function NewWorkbenchModal({

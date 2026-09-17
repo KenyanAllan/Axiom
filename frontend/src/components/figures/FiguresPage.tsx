@@ -132,7 +132,9 @@ export function FiguresPage({ userId, userRole }: FiguresPageProps) {
             No figures yet
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Upload PDFs or images in Source Docs to extract figures automatically.
+            {userRole === "student"
+              ? "Figures will appear here once your teacher uploads source documents."
+              : "Upload PDFs or images in Source Docs to extract figures automatically."}
           </p>
         </div>
       ) : (

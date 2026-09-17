@@ -29,7 +29,7 @@ const DEMO_WORKSPACE_ID = 1;
 export const TOKEN_KEY = "axiom_token";
 export const WORKSPACE_KEY = "axiom_workspace_id";
 
-function getWorkspaceId(): number {
+export function getWorkspaceId(): number {
   if (typeof window === "undefined") return DEMO_WORKSPACE_ID;
   const stored = localStorage.getItem(WORKSPACE_KEY);
   return stored ? parseInt(stored, 10) : DEMO_WORKSPACE_ID;
@@ -138,11 +138,12 @@ export async function updateUserProfile(
 
 export async function fetchActivityFeed(
   userId: string,
+  workspaceId: number = getWorkspaceId(),
   limit = 20,
   offset = 0
 ): Promise<ActivityFeedResponse> {
   const res = await fetch(
-    `${BASE}/api/activities/feed?limit=${limit}&offset=${offset}`,
+    `${BASE}/api/activities/feed?workspace_id=${workspaceId}&limit=${limit}&offset=${offset}`,
     { headers: headers(userId) }
   );
   if (!res.ok) { handle401(res); throw new Error(`Feed fetch failed: ${res.status}`); }
@@ -177,11 +178,12 @@ export async function submitAttempt(
 
 export async function fetchActivityQueue(
   userId: string,
+  workspaceId: number = getWorkspaceId(),
   limit = 20,
   offset = 0
 ): Promise<QueueResponse> {
   const res = await fetch(
-    `${BASE}/api/activities/queue?limit=${limit}&offset=${offset}`,
+    `${BASE}/api/activities/queue?workspace_id=${workspaceId}&limit=${limit}&offset=${offset}`,
     { headers: headers(userId) }
   );
   if (!res.ok) { handle401(res); throw new Error(`Queue fetch failed: ${res.status}`); }

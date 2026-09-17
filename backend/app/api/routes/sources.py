@@ -7,7 +7,8 @@ from datetime import datetime
 
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,7 +101,11 @@ async def _source_with_claims(db: AsyncSession, doc: SourceDocument) -> SourceRe
 
 
 @router.post("/upload", response_model=SourceResponse, status_code=201)
+@router.post("/upload/", response_model=SourceResponse, status_code=201)
+@router.options("/upload")
+@router.options("/upload/")
 async def upload_source_direct(
+    request: Request,
     file: UploadFile = File(...),
     workspace_id: int = Form(...),
     user_id: str = Depends(get_current_user),
@@ -145,6 +150,12 @@ async def upload_source_direct(
     except Exception:
         logger.warning("S3 upload skipped (not configured) for %s", file.filename)
 
+    if not s3_ok:
+        raise HTTPException(
+            status_code=502,
+            detail="File storage is unavailable. Please try again later.",
+        )
+
     doc = SourceDocument(
         workspace_id=workspace_id,
         uploader_id=user_id,
@@ -155,25 +166,24 @@ async def upload_source_direct(
         status="uploaded",
     )
     db.add(doc)
-    await db.flush()
+    # Commit now so the row is visible to the Celery worker
+    await db.commit()
     await db.refresh(doc)
 
-    # Kick off async ingestion pipeline via Celery (only if S3 upload succeeded)
-    if s3_ok:
-        try:
-            from app.workers.celery_app import ingest_source_document_task
+    try:
+        from app.workers.celery_app import ingest_source_document_task
 
-            ingest_source_document_task.delay(
-                source_doc_id=doc.id,
-                workspace_id=doc.workspace_id,
-                s3_key=doc.s3_key,
-                filename=doc.filename,
-                content_type=doc.content_type,
-            )
-        except Exception:
-            logger.warning(
-                "Celery not available — ingestion skipped for doc %s", doc.id
-            )
+        ingest_source_document_task.delay(
+            source_doc_id=doc.id,
+            workspace_id=doc.workspace_id,
+            s3_key=doc.s3_key,
+            filename=doc.filename,
+            content_type=doc.content_type,
+        )
+    except Exception:
+        logger.warning(
+            "Celery not available — ingestion skipped for doc %s", doc.id
+        )
 
     logger.info(
         "Direct upload: registered source doc id=%s, workspace=%s",
@@ -226,10 +236,9 @@ async def register_source(
         status="uploaded",
     )
     db.add(doc)
-    await db.flush()
+    await db.commit()
     await db.refresh(doc)
 
-    # Kick off async ingestion pipeline via Celery
     try:
         from app.workers.celery_app import ingest_source_document_task
 

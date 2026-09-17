@@ -25,13 +25,14 @@ interface LeftSidebarProps {
   onTabChange: (tab: ViewTab) => void;
   studentView?: boolean;
   onToggleStudentView?: () => void;
+  activeWorkbenchId?: number | null;
+  onWorkbenchChange?: (id: number) => void;
 }
 
-export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentView, onToggleStudentView }: LeftSidebarProps) {
+export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentView, onToggleStudentView, activeWorkbenchId, onWorkbenchChange }: LeftSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [workbenches, setWorkbenches] = useState<WorkbenchResponse[]>([]);
-  const [activeId, setActiveId] = useState<number | null>(null);
 
   const initials = user.display_name
     .split(" ")
@@ -43,20 +44,25 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
     listWorkbenches(user.id)
       .then((ws) => {
         setWorkbenches(ws);
-        if (ws.length > 0 && activeId === null) {
-          setActiveId(ws[0].id);
+        if (ws.length > 0 && activeWorkbenchId == null) {
+          onWorkbenchChange?.(ws[0].id);
         }
       })
       .catch(() => {});
-  }, [user.id, activeId]);
+  }, [user.id, activeWorkbenchId, onWorkbenchChange]);
 
   useEffect(() => {
     loadWorkbenches();
   }, [loadWorkbenches]);
 
-  const handleCreated = () => {
+  const handleCreated = (newWorkbench?: WorkbenchResponse) => {
     setShowModal(false);
-    loadWorkbenches();
+    if (newWorkbench) {
+      setWorkbenches((prev) => [...prev, newWorkbench]);
+      onWorkbenchChange?.(newWorkbench.id);
+    } else {
+      loadWorkbenches();
+    }
   };
 
   return (
@@ -144,17 +150,17 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
             {workbenches.map((ws) => (
               <button
                 key={ws.id}
-                onClick={() => setActiveId(ws.id)}
+                onClick={() => onWorkbenchChange?.(ws.id)}
                 className={`flex w-full items-center rounded-md transition-colors ${
                   collapsed
                     ? "justify-center px-0 py-2"
                     : "gap-2.5 px-2 py-1.5"
                 } text-sm ${
-                  ws.id === activeId
+                  ws.id === activeWorkbenchId
                     ? `${collapsed ? "" : "border-l-2 border-primary"} bg-primary/10 font-medium`
                     : "hover:bg-primary/5"
                 }`}
-                style={ws.id !== activeId ? { color: "hsl(var(--sidebar-muted))" } : undefined}
+                style={ws.id !== activeWorkbenchId ? { color: "hsl(var(--sidebar-muted))" } : undefined}
                 title={collapsed ? ws.title : undefined}
               >
                 <BookOpen className="h-4 w-4 shrink-0" />

@@ -123,16 +123,29 @@ export const INITIAL_ACTIVITIES: Activity[] = [
           sentence: "A matrix is in row echelon form when all ___ rows are at the bottom and each leading entry is to the ___ of the one above.",
           blanks: ["zero", "right"],
         },
-        {
-          type: "short_answer",
-          prompt: "Describe in 2–3 sentences how back substitution works once a system is in row echelon form.",
-        },
-        {
-          type: "multi_choice",
-          question: "If a 3×4 augmented matrix has pivots in columns 1, 2, and 3, the system has:",
-          options: ["No solution", "Exactly one solution", "Infinitely many solutions", "Cannot be determined"],
-          correct_index: 1,
-        },
+      ],
+    },
+  },
+  {
+    id: "act_parsons_1",
+    type: "parsons",
+    title: "Order the Steps: Gaussian Elimination",
+    topic: "Gaussian Elimination",
+    xp: 60,
+    payload: {
+      canonicalOrder: [
+        "Write the augmented matrix for the system.",
+        "Identify the first pivot position.",
+        "Use row operations to create zeros below the pivot.",
+        "Move to the next column and repeat.",
+        "Back-substitute to find the solution.",
+      ],
+      shuffledSteps: [
+        "Back-substitute to find the solution.",
+        "Use row operations to create zeros below the pivot.",
+        "Write the augmented matrix for the system.",
+        "Move to the next column and repeat.",
+        "Identify the first pivot position.",
       ],
     },
   },
@@ -150,6 +163,18 @@ export const INITIAL_ACTIVITIES: Activity[] = [
     },
   },
   {
+    id: "act_fy_1",
+    type: "feynman",
+    title: "Teach: Elementary Row Operations",
+    topic: "Row Reduction & Echelon Forms",
+    xp: 50,
+    payload: {
+      concept: "Elementary Row Operations",
+      prompt:
+        "Explain in your own words why elementary row operations do not change the solution set of a system of linear equations. Use an analogy if it helps.",
+    },
+  },
+  {
     id: "act_sc_1",
     type: "scenario",
     title: "Network Flow Optimization",
@@ -163,18 +188,6 @@ export const INITIAL_ACTIVITIES: Activity[] = [
     },
   },
   {
-    id: "act_fy_1",
-    type: "feynman",
-    title: "Teach: Elementary Row Operations",
-    topic: "Row Reduction & Echelon Forms",
-    xp: 50,
-    payload: {
-      concept: "Elementary Row Operations",
-      prompt:
-        "Explain in your own words why elementary row operations do not change the solution set of a system of linear equations. Use an analogy if it helps.",
-    },
-  },
-  {
     id: "act_ao_1",
     type: "mini_podcast",
     title: "Mini Podcast: Determinants",
@@ -185,6 +198,16 @@ export const INITIAL_ACTIVITIES: Activity[] = [
         "The determinant is a scalar value computed from a square matrix that encodes key geometric and algebraic properties. A nonzero determinant means the matrix is invertible, the columns are linearly independent, and the associated transformation preserves dimension. The determinant can be computed via cofactor expansion along any row or column, or by reducing to triangular form and multiplying the diagonal entries.",
       question:
         "After listening, explain: what does a zero determinant tell you about the column vectors of the matrix?",
+    },
+  },
+  {
+    id: "act_vs_1",
+    type: "visual_sketch",
+    title: "Sketch: Column Space vs Null Space",
+    topic: "Vector Spaces",
+    xp: 75,
+    payload: {
+      prompt: "Draw or sketch a diagram showing the relationship between the column space and null space of a 3×2 matrix. Label the dimensions and indicate where the input and output vectors live.",
     },
   },
 ];

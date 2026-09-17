@@ -120,18 +120,13 @@ export default function Home() {
     const loadFeed = fetchActivityFeed(user.id)
       .then((data) =>
         data.cards.map((card): Activity => {
-          const dt = mapBackendType(card.diagnostic_type);
-          const actType = dt === "feynman"
-            ? "feynman" as const
-            : dt === "myth_buster"
-              ? "myth_buster" as const
-              : "flashcard" as const;
+          const dt = mapBackendType(card.diagnostic_type) as Activity["type"];
           return {
             id: card.claim_id,
-            type: actType,
+            type: dt,
             title: card.claim_title,
             topic: card.topic_title,
-            xp: XP_BY_TYPE[actType] ?? 25,
+            xp: XP_BY_TYPE[dt] ?? 25,
           };
         })
       )

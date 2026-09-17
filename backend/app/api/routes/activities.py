@@ -87,12 +87,15 @@ async def evaluate(
 
     return EvaluateResult(
         claim_id=result["claim_id"],
-        is_correct=result["outcome"] == "understood",
+        outcome=result["outcome"],
         feedback=result.get("feedback", ""),
         xp_awarded=result["xp_awarded"],
         new_status=result["new_status"],
         total_xp=result["total_xp"],
         level=result["level"],
+        streak_days=result.get("streak_days", 0),
+        rating_change=result.get("rating_change", 0),
+        new_rating=result.get("new_rating", 1),
     )
 
 
@@ -101,6 +104,7 @@ async def evaluate(
 
 @router.get("/feed", response_model=ActivityFeedResponse)
 async def activity_feed(
+    workspace_id: int | None = None,
     limit: int = 20,
     offset: int = 0,
     user_id: str = Depends(get_current_user),
@@ -130,8 +134,11 @@ async def activity_feed(
             & (UserMastery.user_id == user_id),
         )
         .where(func.coalesce(UserMastery.status, "unseen") != "mastered")
-        .order_by(
-            # Active first, then unseen
+    )
+    if workspace_id is not None:
+        stmt = stmt.where(Topic.workspace_id == workspace_id)
+    stmt = (
+        stmt.order_by(
             case(
                 (func.coalesce(UserMastery.status, "unseen") == "active", 0),
                 else_=1,
@@ -148,6 +155,7 @@ async def activity_feed(
     count_stmt = (
         select(func.count())
         .select_from(AtomicClaim)
+        .join(Topic, AtomicClaim.topic_id == Topic.id)
         .outerjoin(
             UserMastery,
             (UserMastery.claim_id == AtomicClaim.id)
@@ -155,6 +163,8 @@ async def activity_feed(
         )
         .where(func.coalesce(UserMastery.status, "unseen") != "mastered")
     )
+    if workspace_id is not None:
+        count_stmt = count_stmt.where(Topic.workspace_id == workspace_id)
     total = (await db.execute(count_stmt)).scalar_one()
 
     cards = [

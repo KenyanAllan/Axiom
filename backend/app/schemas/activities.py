@@ -78,7 +78,7 @@ class AttemptCreate(BaseModel):
 
 class EvaluateResult(BaseModel):
     claim_id: str
-    is_correct: bool
+    outcome: Outcome
     feedback: str = Field(
         ..., description="Model-generated formative feedback for the student."
     )
@@ -86,6 +86,9 @@ class EvaluateResult(BaseModel):
     new_status: Literal["unseen", "active", "mastered"]
     total_xp: int
     level: int
+    streak_days: int = 0
+    rating_change: int = 0
+    new_rating: int = 1
 
 
 class ActivityResponse(BaseModel):

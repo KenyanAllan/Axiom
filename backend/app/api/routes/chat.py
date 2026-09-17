@@ -73,6 +73,7 @@ class ChatSessionResponse(BaseModel):
     workspace_id: int
     title: str | None = None
     created_at: datetime
+    updated_at: datetime | None = None
     messages: list[ChatMessageResponse] = []
 
     model_config = {"from_attributes": True}
@@ -84,6 +85,8 @@ class ChatSessionListItem(BaseModel):
     workspace_id: int
     title: str | None = None
     created_at: datetime
+    updated_at: datetime | None = None
+    message_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -326,7 +329,9 @@ async def create_session(
     await db.flush()
     await db.refresh(session, attribute_names=["messages"])
 
-    return ChatSessionResponse.model_validate(session)
+    resp = ChatSessionResponse.model_validate(session)
+    resp.updated_at = resp.created_at
+    return resp
 
 
 @router.get("/sessions", response_model=list[ChatSessionListItem])
@@ -336,16 +341,35 @@ async def list_sessions(
     db: AsyncSession = Depends(get_db),
 ) -> list[ChatSessionListItem]:
     """List the user's chat sessions for a workspace."""
+    from sqlalchemy import func as sa_func
+
     stmt = (
-        select(ChatSession)
+        select(
+            ChatSession,
+            sa_func.count(ChatMessage.id).label("message_count"),
+            sa_func.max(ChatMessage.created_at).label("last_message_at"),
+        )
+        .outerjoin(ChatMessage, ChatMessage.session_id == ChatSession.id)
         .where(
             ChatSession.user_id == user_id,
             ChatSession.workspace_id == workspace_id,
         )
+        .group_by(ChatSession.id)
         .order_by(ChatSession.created_at.desc())
     )
-    rows = (await db.execute(stmt)).scalars().all()
-    return [ChatSessionListItem.model_validate(r) for r in rows]
+    rows = (await db.execute(stmt)).all()
+    return [
+        ChatSessionListItem(
+            id=session.id,
+            user_id=session.user_id,
+            workspace_id=session.workspace_id,
+            title=session.title,
+            created_at=session.created_at,
+            updated_at=last_message_at or session.created_at,
+            message_count=msg_count,
+        )
+        for session, msg_count, last_message_at in rows
+    ]
 
 
 @router.get("/sessions/{session_id}", response_model=ChatSessionResponse)
@@ -368,6 +392,10 @@ async def get_session(
         raise HTTPException(status_code=404, detail="Chat session not found")
 
     resp = ChatSessionResponse.model_validate(session)
+    if resp.messages:
+        resp.updated_at = max(m.created_at for m in resp.messages)
+    else:
+        resp.updated_at = resp.created_at
 
     from app.services.s3 import generate_download_url
 
