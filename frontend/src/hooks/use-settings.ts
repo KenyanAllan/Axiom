@@ -15,7 +15,7 @@ export interface AppSettings {
 
 const DEFAULTS: AppSettings = {
   theme: "system",
-  fontScale: 1,
+  fontScale: 1.3,
   ttsVoice: "",
   ttsSpeed: 1,
   autoReadChat: false,
@@ -26,7 +26,11 @@ function load(): AppSettings {
   if (typeof window === "undefined") return DEFAULTS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+    if (raw) {
+      const parsed = { ...DEFAULTS, ...JSON.parse(raw) };
+      if (parsed.fontScale === 1) parsed.fontScale = DEFAULTS.fontScale;
+      return parsed;
+    }
   } catch {}
   return DEFAULTS;
 }

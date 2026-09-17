@@ -16,6 +16,7 @@ import time
 from typing import Any
 
 import boto3
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
 
@@ -248,6 +249,7 @@ Return ONLY the JSON object. No markdown fences.
 """
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 def _call_bedrock_extract(chunk_text: str) -> dict[str, Any] | None:
     """Call Bedrock Claude to extract topic + claims from a chunk."""
     kwargs: dict[str, Any] = {"region_name": settings.aws_default_region}
@@ -256,34 +258,30 @@ def _call_bedrock_extract(chunk_text: str) -> dict[str, Any] | None:
         kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
     client = boto3.client("bedrock-runtime", **kwargs)
 
+    response = client.converse(
+        modelId=settings.bedrock_model_id,
+        system=[{"text": TOPIC_EXTRACTION_PROMPT}],
+        messages=[{
+            "role": "user",
+            "content": [{"text": f"## MARKDOWN CHUNK\n\n{chunk_text}"}],
+        }],
+        inferenceConfig={"maxTokens": 4096, "temperature": 0.2},
+    )
+
+    raw = response["output"]["message"]["content"][0]["text"]
+
     try:
-        response = client.converse(
-            modelId=settings.bedrock_model_id,
-            system=[{"text": TOPIC_EXTRACTION_PROMPT}],
-            messages=[{
-                "role": "user",
-                "content": [{"text": f"## MARKDOWN CHUNK\n\n{chunk_text}"}],
-            }],
-            inferenceConfig={"maxTokens": 4096, "temperature": 0.2},
-        )
-
-        raw = response["output"]["message"]["content"][0]["text"]
-
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-            logger.error("Failed to parse extraction JSON: %s", raw[:200])
-            return None
-
-    except Exception as exc:
-        logger.error("Bedrock extraction failed: %s", exc)
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        logger.error("Failed to parse extraction JSON: %s", raw[:200])
         return None
 
 
-def _call_bedrock_embed(text: str) -> list[float] | None:
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+def _call_bedrock_embed(text: str) -> list[float]:
     """Generate a 1024-dim embedding using Titan Embeddings v2."""
     kwargs: dict[str, Any] = {"region_name": settings.aws_default_region}
     if settings.aws_access_key_id:
@@ -291,20 +289,17 @@ def _call_bedrock_embed(text: str) -> list[float] | None:
         kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
     client = boto3.client("bedrock-runtime", **kwargs)
 
-    try:
-        response = client.invoke_model(
-            modelId=settings.bedrock_embed_model_id,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps({"inputText": text, "dimensions": 1024, "normalize": True}),
-        )
-        result = json.loads(response["body"].read())
-        return result["embedding"]
-    except Exception as exc:
-        logger.warning("Embedding generation failed: %s", exc)
-        return None
+    response = client.invoke_model(
+        modelId=settings.bedrock_embed_model_id,
+        contentType="application/json",
+        accept="application/json",
+        body=json.dumps({"inputText": text, "dimensions": 1024, "normalize": True}),
+    )
+    result = json.loads(response["body"].read())
+    return result["embedding"]
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 def _call_bedrock_extract_glossary(chunk_text: str) -> list[dict[str, str]]:
     """Call Bedrock Claude to extract glossary terms from a chunk."""
     kwargs: dict[str, Any] = {"region_name": settings.aws_default_region}
@@ -313,33 +308,28 @@ def _call_bedrock_extract_glossary(chunk_text: str) -> list[dict[str, str]]:
         kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
     client = boto3.client("bedrock-runtime", **kwargs)
 
+    response = client.converse(
+        modelId=settings.bedrock_model_id,
+        system=[{"text": GLOSSARY_EXTRACTION_PROMPT}],
+        messages=[{
+            "role": "user",
+            "content": [{"text": f"## MARKDOWN CHUNK\n\n{chunk_text}"}],
+        }],
+        inferenceConfig={"maxTokens": 2048, "temperature": 0.2},
+    )
+
+    raw = response["output"]["message"]["content"][0]["text"]
     try:
-        response = client.converse(
-            modelId=settings.bedrock_model_id,
-            system=[{"text": GLOSSARY_EXTRACTION_PROMPT}],
-            messages=[{
-                "role": "user",
-                "content": [{"text": f"## MARKDOWN CHUNK\n\n{chunk_text}"}],
-            }],
-            inferenceConfig={"maxTokens": 2048, "temperature": 0.2},
-        )
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+        else:
+            logger.error("Failed to parse glossary JSON: %s", raw[:200])
+            return []
 
-        raw = response["output"]["message"]["content"][0]["text"]
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if match:
-                data = json.loads(match.group())
-            else:
-                logger.error("Failed to parse glossary JSON: %s", raw[:200])
-                return []
-
-        return data.get("terms", [])
-
-    except Exception as exc:
-        logger.error("Bedrock glossary extraction failed: %s", exc)
-        return []
+    return data.get("terms", [])
 
 
 def _find_or_create_glossary_term_sync(
@@ -511,7 +501,11 @@ def ingest_source_document(
 
         for chunk in chunks:
             # 4a. Extract topic + claims
-            extraction = _call_bedrock_extract(chunk["text"])
+            try:
+                extraction = _call_bedrock_extract(chunk["text"])
+            except Exception:
+                logger.error("Bedrock extraction failed after retries for chunk %d", chunk["index"])
+                extraction = None
             if extraction is None:
                 stats["errors"] += 1
                 continue
@@ -523,7 +517,11 @@ def ingest_source_document(
             claims_data = extraction.get("claims", [])
 
             # 4b. Generate topic embedding
-            topic_embedding = _call_bedrock_embed(topic_title + ": " + (topic_summary or ""))
+            try:
+                topic_embedding = _call_bedrock_embed(topic_title + ": " + (topic_summary or ""))
+            except Exception:
+                logger.warning("Topic embedding failed after retries for '%s'", topic_title)
+                topic_embedding = None
 
             # 4c. Find or create topic (spec 9.1 vector similarity consolidation)
             cache_key = topic_title.lower().strip()
@@ -555,7 +553,11 @@ def ingest_source_document(
                     continue
 
                 claim_content = claim_data.get("content", "")
-                claim_embedding = _call_bedrock_embed(claim_content) if claim_content else None
+                try:
+                    claim_embedding = _call_bedrock_embed(claim_content) if claim_content else None
+                except Exception:
+                    logger.warning("Claim embedding failed after retries for '%s'", claim_id)
+                    claim_embedding = None
 
                 claim = AtomicClaim(
                     id=claim_id,
@@ -572,14 +574,21 @@ def ingest_source_document(
                 stats["claims_inserted"] += 1
 
             # 4e. Extract and insert glossary terms
-            glossary_terms = _call_bedrock_extract_glossary(chunk["text"])
+            try:
+                glossary_terms = _call_bedrock_extract_glossary(chunk["text"])
+            except Exception:
+                logger.error("Glossary extraction failed after retries for chunk %d", chunk["index"])
+                glossary_terms = []
             for gt_data in glossary_terms:
                 gt_term = gt_data.get("term", "").strip()
                 gt_def = gt_data.get("definition", "").strip()
                 if not gt_term or not gt_def:
                     continue
 
-                gt_embedding = _call_bedrock_embed(f"{gt_term}: {gt_def}")
+                try:
+                    gt_embedding = _call_bedrock_embed(f"{gt_term}: {gt_def}")
+                except Exception:
+                    gt_embedding = None
                 source_ref = {
                     "chunk_index": chunk["index"],
                     "text_excerpt": chunk["text"][:200],

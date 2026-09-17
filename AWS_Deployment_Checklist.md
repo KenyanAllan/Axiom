@@ -122,7 +122,7 @@
 
 - The app **refuses to start** if `ENVIRONMENT=production` and `JWT_SECRET_KEY` is still the default placeholder. This is intentional — you must set a real secret.
 - With `ENABLE_DEMO_AUTH=false`, the `X-Demo-User` header is rejected. All users must authenticate via JWT (`/api/auth/register` and `/api/auth/login`).
-- Rate limiting is active: `/api/auth/login` = 10/min, `/api/auth/register` = 5/min, chat messages = 20/min, all other endpoints = 200/min per IP.
+- Rate limiting is active: `/api/auth/login` = 10/min, `/api/auth/register` = 5/min, chat messages = 20/min, search = 30/min, all other endpoints = 200/min per IP.
 - File uploads are capped at `UPLOAD_MAX_BYTES` (default 50 MB).
 - CORS is restricted to the origins in `CORS_ORIGINS` — make sure your Amplify domain is listed.
 
@@ -195,7 +195,7 @@
 
 These are documented from the codebase audit but are acceptable for a hackathon demo:
 
-- **Missing workspace authorization (IDOR):** Most routes (topics, claims, search, DAG, audio, glossary) don't verify the user owns the workspace. Any authenticated user can access any workspace's data.
+- **Missing workspace authorization (IDOR):** Most routes (topics, claims, DAG, audio, glossary) don't verify the user owns the workspace. Any authenticated user can access any workspace's data. (Search endpoint now requires and enforces `workspace_id`.)
 - **No Polly retry logic:** Unlike Bedrock calls, Polly has no retry on throttling errors.
 - **boto3 client proliferation in `ingestion.py`:** Creates new clients per function call instead of reusing singletons. Wasteful under load.
 - **Thread-unsafe singletons:** All boto3 singleton patterns use `global` + `if None` without locking.

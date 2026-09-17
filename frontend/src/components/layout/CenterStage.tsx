@@ -22,6 +22,8 @@ import {
   Pencil,
   Trash2,
   Loader2,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
@@ -810,6 +812,7 @@ export function CenterStage({
             onClaimClick={addClaimContext}
             isTeacher={isTeacher}
             onViewSource={onViewSource}
+            activeTopics={new Set(activities.map((a) => a.topic))}
           />
         </TabsContent>
 
@@ -1050,6 +1053,7 @@ interface DemoWikiTabProps {
   onClaimClick: (claim: WikiClaim, pageTitle: string) => void;
   isTeacher: boolean;
   onViewSource?: (sourceDocumentId: string) => void;
+  activeTopics?: Set<string>;
 }
 
 type WikiMode =
@@ -1067,6 +1071,7 @@ function DemoWikiTab({
   onClaimClick,
   isTeacher,
   onViewSource,
+  activeTopics,
 }: DemoWikiTabProps) {
   const [mode, setMode] = useState<WikiMode>("view");
   const [editClaimId, setEditClaimId] = useState<string | null>(null);
@@ -1371,6 +1376,11 @@ function DemoWikiTab({
           <>
             <div className="flex items-center gap-3">
               <h2 className="text-xl font-bold">{page.title}</h2>
+              {activeTopics?.has(page.title) && (
+                <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                  Active
+                </span>
+              )}
               <button
                 onClick={handleReadAloud}
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
@@ -1538,7 +1548,14 @@ function DemoWikiTab({
                 <BookText className="h-4 w-4 text-muted-foreground" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">{wp.title}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold">{wp.title}</p>
+                  {activeTopics?.has(wp.title) && (
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                      Active
+                    </span>
+                  )}
+                </div>
                 <div className="mt-0.5 flex gap-1">
                   {wp.aliases.slice(0, 3).map((a) => (
                     <span
@@ -1598,48 +1615,156 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
 
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
-  const dragging = useRef(false);
+  const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const panStart = useRef({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const inertiaRef = useRef<number | null>(null);
+  const velocityRef = useRef({ x: 0, y: 0 });
+  const lastPointer = useRef({ x: 0, y: 0, t: 0 });
 
   const MIN_ZOOM = 0.3;
   const MAX_ZOOM = 3;
+  const PADDING = 50;
+
+  const clampPan = useCallback((p: { x: number; y: number }, z: number) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return p;
+    const cw = rect.width;
+    const ch = rect.height;
+    const scaledW = svgW * z;
+    const scaledH = svgH * z;
+    const minX = Math.min(PADDING, cw - scaledW - PADDING);
+    const maxX = Math.max(PADDING, cw - scaledW - PADDING);
+    const minY = Math.min(PADDING, ch - scaledH - PADDING);
+    const maxY = Math.max(PADDING, ch - scaledH - PADDING);
+    return {
+      x: Math.max(Math.min(minX, maxX), Math.min(Math.max(minX, maxX), p.x)),
+      y: Math.max(Math.min(minY, maxY), Math.min(Math.max(minY, maxY), p.y)),
+    };
+  }, [svgW, svgH]);
+
+  const cancelInertia = useCallback(() => {
+    if (inertiaRef.current != null) {
+      cancelAnimationFrame(inertiaRef.current);
+      inertiaRef.current = null;
+    }
+  }, []);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
+    cancelInertia();
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+
+    let factor: number;
+    if (e.ctrlKey) {
+      factor = 1 - e.deltaY * 0.01;
+    } else {
+      factor = e.deltaY < 0 ? 1.05 : 1 / 1.05;
+    }
+
     setZoom((prev) => {
       const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev * factor));
       const scale = next / prev;
-      setPan((p) => ({ x: mx - scale * (mx - p.x), y: my - scale * (my - p.y) }));
+      setPan((p) => clampPan({ x: mx - scale * (mx - p.x), y: my - scale * (my - p.y) }, next));
       return next;
     });
-  }, []);
+  }, [clampPan, cancelInertia]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest("[data-node]")) return;
-    dragging.current = true;
+    cancelInertia();
+    setIsDragging(true);
     dragStart.current = { x: e.clientX, y: e.clientY };
-    panStart.current = { ...pan };
+    setPan((current) => {
+      panStart.current = { ...current };
+      return current;
+    });
+    lastPointer.current = { x: e.clientX, y: e.clientY, t: performance.now() };
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-  }, [pan]);
+  }, [cancelInertia]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragging.current) return;
-    setPan({
-      x: panStart.current.x + (e.clientX - dragStart.current.x),
-      y: panStart.current.y + (e.clientY - dragStart.current.y),
+    if (!isDragging) return;
+    const now = performance.now();
+    const dt = now - lastPointer.current.t;
+    if (dt > 0) {
+      velocityRef.current = {
+        x: (e.clientX - lastPointer.current.x) / dt * 16,
+        y: (e.clientY - lastPointer.current.y) / dt * 16,
+      };
+    }
+    lastPointer.current = { x: e.clientX, y: e.clientY, t: now };
+    setZoom((z) => {
+      setPan(() => clampPan({
+        x: panStart.current.x + (e.clientX - dragStart.current.x),
+        y: panStart.current.y + (e.clientY - dragStart.current.y),
+      }, z));
+      return z;
     });
-  }, []);
+  }, [isDragging, clampPan]);
 
-  const handlePointerUp = useCallback(() => { dragging.current = false; }, []);
+  const handlePointerUp = useCallback(() => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    const vx = velocityRef.current.x;
+    const vy = velocityRef.current.y;
+    if (Math.abs(vx) < 0.5 && Math.abs(vy) < 0.5) return;
 
-  const handleReset = () => { setPan({ x: 0, y: 0 }); setZoom(1); };
+    let velX = vx;
+    let velY = vy;
+    const decay = 0.92;
+
+    const step = () => {
+      velX *= decay;
+      velY *= decay;
+      if (Math.abs(velX) < 0.1 && Math.abs(velY) < 0.1) {
+        inertiaRef.current = null;
+        return;
+      }
+      setZoom((z) => {
+        setPan((p) => clampPan({ x: p.x + velX, y: p.y + velY }, z));
+        return z;
+      });
+      inertiaRef.current = requestAnimationFrame(step);
+    };
+    inertiaRef.current = requestAnimationFrame(step);
+  }, [isDragging, clampPan]);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("[data-node]")) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    setZoom((prev) => {
+      const next = Math.min(MAX_ZOOM, prev * 1.5);
+      const scale = next / prev;
+      setPan((p) => clampPan({ x: mx - scale * (mx - p.x), y: my - scale * (my - p.y) }, next));
+      return next;
+    });
+  }, [clampPan]);
+
+  const handleZoomButton = useCallback((delta: number) => {
+    cancelInertia();
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    setZoom((prev) => {
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev + delta));
+      const scale = next / prev;
+      setPan((p) => clampPan({ x: cx - scale * (cx - p.x), y: cy - scale * (cy - p.y) }, next));
+      return next;
+    });
+  }, [clampPan, cancelInertia]);
+
+  const handleReset = () => { cancelInertia(); setPan({ x: 0, y: 0 }); setZoom(1); };
+
+  useEffect(() => () => cancelInertia(), [cancelInertia]);
 
   const getColor = (mastery: number) => {
     if (mastery === 0)
@@ -1660,31 +1785,42 @@ function DemoNodeMapTab({ nodes, onNodeClick }: DemoNodeMapTabProps) {
         <div>
           <h2 className="text-xl font-bold">Knowledge Node Map</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Topic dependency graph. Scroll to zoom, drag to pan. Click a node to view its wiki page.
+            Scroll to zoom, drag to pan, double-click to zoom in. Click a node to view its wiki page.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] text-muted-foreground">{Math.round(zoom * 100)}%</span>
-          <button onClick={handleReset} className="rounded-md border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-            Reset View
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => handleZoomButton(-0.25)} className="flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Zoom out">
+            <ZoomOut className="h-3.5 w-3.5" />
+          </button>
+          <span className="w-10 text-center font-mono text-[10px] text-muted-foreground">{Math.round(zoom * 100)}%</span>
+          <button onClick={() => handleZoomButton(0.25)} className="flex h-7 w-7 items-center justify-center rounded-md border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Zoom in">
+            <ZoomIn className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={handleReset} className="ml-1 rounded-md border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+            Reset
           </button>
         </div>
       </div>
       <div
         ref={containerRef}
         className="mt-5 overflow-hidden rounded-xl border bg-card"
-        style={{ height: Math.max(400, svgH), cursor: dragging.current ? "grabbing" : "grab" }}
+        style={{ height: Math.max(400, svgH), cursor: isDragging ? "grabbing" : "grab" }}
         onWheel={handleWheel}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
+        onDoubleClick={handleDoubleClick}
       >
         <svg
           width="100%"
           height="100%"
           viewBox={`0 0 ${svgW} ${svgH}`}
-          style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: "0 0" }}
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: "0 0",
+            transition: isDragging ? "none" : "transform 150ms ease-out",
+          }}
         >
           <defs>
             <marker id="arrow-prereq" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">

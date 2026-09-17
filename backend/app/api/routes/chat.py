@@ -26,6 +26,8 @@ from app.models.tables import (
     UserActivityQueue,
     Workspace,
 )
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from app.services.bedrock import generate_embedding
 from app.services.tool_executor import TOOL_DEFINITIONS, execute_tool
 
@@ -132,6 +134,7 @@ without using tools"""
 # ── RAG + Tool-use converse ────────────────────────────────────────────────
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
 def _call_bedrock_converse(
     messages: list[dict],
     tool_config: dict | None = None,
@@ -165,21 +168,33 @@ async def _rag_converse_with_tools(
     workspace_id: int,
     user_role: str,
     classroom_id: int | None,
+    conversation_history: list | None = None,
 ) -> dict[str, Any]:
     """Multi-turn Bedrock Converse with tool-use loop.
 
-    1. Send user message with RAG context
-    2. If model requests tool calls, execute them and send results back
-    3. Repeat until model returns text (or max rounds reached)
+    1. Include conversation history for multi-turn context
+    2. Send user message with RAG context
+    3. If model requests tool calls, execute them and send results back
+    4. Repeat until model returns text (or max rounds reached)
     """
+    messages: list[dict] = []
+
+    if conversation_history:
+        for msg in conversation_history:
+            if messages and messages[-1]["role"] == msg.role:
+                continue
+            messages.append({
+                "role": msg.role,
+                "content": [{"text": msg.content}],
+            })
+        if messages and messages[-1]["role"] == "user":
+            messages.pop()
+
     prompt = (
         f"## CONTEXT (retrieved from the knowledge base)\n{context}\n\n"
         f"## USER MESSAGE\n{user_message}"
     )
-
-    messages: list[dict] = [
-        {"role": "user", "content": [{"text": prompt}]}
-    ]
+    messages.append({"role": "user", "content": [{"text": prompt}]})
 
     tool_config = {"tools": [{"toolSpec": t} for t in TOOL_DEFINITIONS]}
     tool_calls_made: list[dict] = []
@@ -367,6 +382,16 @@ async def send_message(
     workspace = await db.get(Workspace, chat_session.workspace_id)
     classroom_id = workspace.classroom_id if workspace else None
 
+    # Load recent conversation history for multi-turn context
+    history_stmt = (
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(10)
+    )
+    history_rows = (await db.execute(history_stmt)).scalars().all()
+    conversation_history = list(reversed(history_rows))
+
     # 1. Save user message
     user_msg = ChatMessage(
         session_id=session_id,
@@ -408,12 +433,15 @@ async def send_message(
         claim_rows = (await db.execute(claim_stmt)).all()
 
         for row in claim_rows:
+            similarity = round(1 - (row.distance or 1.0), 4)
+            if similarity < 0.3:
+                continue
             rag_sources.append(
                 {
                     "claim_id": row.id,
                     "claim_title": row.title,
                     "topic_title": row.topic_title,
-                    "relevance_score": round(1 - (row.distance or 1.0), 4),
+                    "relevance_score": similarity,
                 }
             )
             context_parts.append(
@@ -435,6 +463,7 @@ async def send_message(
         workspace_id=chat_session.workspace_id,
         user_role=user_role,
         classroom_id=classroom_id,
+        conversation_history=conversation_history,
     )
 
     # 5. Save and return assistant message

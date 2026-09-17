@@ -351,8 +351,8 @@ export function SettingsPage({ user, settings, onUpdateProfile, onUpdateSetting 
             <p className="mt-2 text-center font-mono text-lg font-semibold">{Math.round(settings.fontScale * 100)}%</p>
             <input
               type="range"
-              min={0.75}
-              max={1.5}
+              min={0.9}
+              max={1.7}
               step={0.05}
               value={settings.fontScale}
               onChange={(e) => onUpdateSetting("fontScale", parseFloat(e.target.value))}
