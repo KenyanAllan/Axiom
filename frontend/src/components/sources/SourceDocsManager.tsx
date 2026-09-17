@@ -680,8 +680,8 @@ export function SourceDocsManager({ userId, userRole, pendingSourceDocId, onPend
       if (apiDocs.length > 0) {
         setDocs(apiDocs);
       }
-    } catch {
-      // API not available — keep hardcoded fallback
+    } catch (err) {
+      console.error("SourceDocsManager: failed to list source docs:", err);
     }
   }, [userId]);
 
@@ -735,7 +735,8 @@ export function SourceDocsManager({ userId, userRole, pendingSourceDocId, onPend
       try {
         const uploaded = await uploadSourceDoc(userId, file);
         setDocs((prev) => [uploaded, ...prev]);
-      } catch {
+      } catch (err) {
+        console.error("SourceDocsManager: failed to upload source doc:", err);
         const fallbackDoc: SourceDocument = {
           id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           filename: file.name,
@@ -762,7 +763,8 @@ export function SourceDocsManager({ userId, userRole, pendingSourceDocId, onPend
 
     try {
       await deleteSourceDoc(userId, id);
-    } catch {
+    } catch (err) {
+      console.error("SourceDocsManager: failed to delete source doc:", err);
       fetchDocs();
     }
   };

@@ -520,7 +520,8 @@ export function TeacherDashboard({ userId, onReviewActivity }: TeacherDashboardP
                 s.id
               );
               return [s.id, progress] as const;
-            } catch {
+            } catch (err) {
+              console.error("TeacherDashboard: failed to fetch student progress:", err);
               return [s.id, null] as const;
             }
           })
@@ -546,8 +547,8 @@ export function TeacherDashboard({ userId, onReviewActivity }: TeacherDashboardP
           if (!cancelled && history.items.length > 0) {
             setActivityHistory(history.items);
           }
-        } catch {
-          // keep demo data
+        } catch (err) {
+          console.error("TeacherDashboard: failed to fetch activity history:", err);
         }
       } catch (err) {
         console.warn("TeacherDashboard: API unavailable, using demo data", err);

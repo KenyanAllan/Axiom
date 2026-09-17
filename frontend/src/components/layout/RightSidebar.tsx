@@ -292,9 +292,9 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
     async function load() {
       try {
         const [profile, mastery, history] = await Promise.all([
-          fetchUserProfile(user.id).catch(() => null),
-          fetchUserMastery(user.id).catch(() => null),
-          fetchUserHistory(user.id).catch(() => null),
+          fetchUserProfile(user.id).catch((err) => { console.error("RightSidebar: failed to fetch user profile:", err); return null; }),
+          fetchUserMastery(user.id).catch((err) => { console.error("RightSidebar: failed to fetch user mastery:", err); return null; }),
+          fetchUserHistory(user.id).catch((err) => { console.error("RightSidebar: failed to fetch user history:", err); return null; }),
         ]);
         if (cancelled) return;
         if (profile) setLiveProfile(profile);
@@ -306,8 +306,8 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
         if (history && history.length > 0) {
           setActivityTimeline(historyToTimeline(history));
         }
-      } catch {
-        // Silently keep fallback data
+      } catch (err) {
+        console.error("RightSidebar: failed to load student data:", err);
       }
     }
 
@@ -327,10 +327,10 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
         const classroom = classrooms[0];
 
         const [leaderboard, diagnostic, topics, claims] = await Promise.all([
-          fetchClassroomLeaderboard(user.id, classroom.id).catch(() => null),
-          fetchClassroomDiagnostic(user.id, classroom.id).catch(() => null),
-          fetchTopics(user.id).catch(() => null),
-          fetchClaims(user.id).catch(() => null),
+          fetchClassroomLeaderboard(user.id, classroom.id).catch((err) => { console.error("RightSidebar: failed to fetch leaderboard:", err); return null; }),
+          fetchClassroomDiagnostic(user.id, classroom.id).catch((err) => { console.error("RightSidebar: failed to fetch diagnostic:", err); return null; }),
+          fetchTopics(user.id).catch((err) => { console.error("RightSidebar: failed to fetch topics:", err); return null; }),
+          fetchClaims(user.id).catch((err) => { console.error("RightSidebar: failed to fetch claims:", err); return null; }),
         ]);
         if (cancelled) return;
 
@@ -340,8 +340,8 @@ export function RightSidebar({ user, onActivityClick, userRole, onTabChange, onR
         if (diagnostic && topics && claims && topics.length > 0) {
           setDomainMastery(buildClassMastery(diagnostic, claims, topics));
         }
-      } catch {
-        // Silently keep fallback data
+      } catch (err) {
+        console.error("RightSidebar: failed to load teacher data:", err);
       }
     }
 

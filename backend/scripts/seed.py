@@ -47,12 +47,12 @@ def seed():
             xp=0, level=1, streak_days=0,
         ))
 
-        # ── Personal workspace for the learner ───────────────────────────
+        # ── Personal workbench for the learner ───────────────────────────
         db.merge(Workspace(
             id=1,
             user_id="usr_learner_demo",
             title="Linear Algebra",
-            description="Demo workspace for linear algebra topics",
+            description="Demo workbench for linear algebra topics",
             is_classroom_shared=False,
         ))
 

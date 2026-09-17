@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,8 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models.tables import ActivityAttempt, AtomicClaim, Topic, User, UserMastery
 from app.schemas.activities import HistoryEvent, MasteryEntry, UserProfile, UserProfileUpdate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -25,8 +29,10 @@ async def get_me(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
+        logger.warning("User not found: user_id=%s", user_id)
         raise HTTPException(status_code=404, detail="User not found")
 
+    logger.debug("Fetched user profile: user_id=%s", user_id)
     return UserProfile(
         id=user.id,
         display_name=user.display_name,
@@ -52,6 +58,7 @@ async def update_me(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
+        logger.warning("User not found for update: user_id=%s", user_id)
         raise HTTPException(status_code=404, detail="User not found")
 
     if body.email is not None:
@@ -62,6 +69,7 @@ async def update_me(
     await db.commit()
     await db.refresh(user)
 
+    logger.info("Updated user profile: user_id=%s", user_id)
     return UserProfile(
         id=user.id,
         display_name=user.display_name,
@@ -93,6 +101,7 @@ async def get_my_mastery(
     result = await db.execute(stmt)
     rows = result.all()
 
+    logger.debug("Fetched mastery entries: user_id=%s, count=%d", user_id, len(rows))
     return [
         MasteryEntry(
             claim_id=mastery.claim_id,
@@ -124,6 +133,7 @@ async def get_my_history(
     result = await db.execute(stmt)
     rows = result.all()
 
+    logger.debug("Fetched history events: user_id=%s, count=%d", user_id, len(rows))
     return [
         HistoryEvent(
             claim_id=attempt.claim_id or "",

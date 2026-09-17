@@ -65,6 +65,8 @@ async def evaluate_student_response(
     7. Update user XP and level.
     8. Return full evaluation result.
     """
+    logger.info("Evaluating response: user_id=%s claim_id=%s activity_id=%s", user_id, claim_id, activity_id)
+
     # ── 1. Load the claim ────────────────────────────────────────────────────
     claim = await db.get(AtomicClaim, claim_id)
     if claim is None:
@@ -165,12 +167,16 @@ async def evaluate_student_response(
                 "Award 'did_not_understand' if they miss the flaw or incorrectly validate the statement."
             )
 
-        grading = await asyncio.to_thread(
-            grade_response,
-            claim_content=claim.content,
-            rubric=grading_rubric,
-            student_response=student_response,
-        )
+        try:
+            grading = await asyncio.to_thread(
+                grade_response,
+                claim_content=claim.content,
+                rubric=grading_rubric,
+                student_response=student_response,
+            )
+        except Exception:
+            logger.error("Bedrock grading failed for claim_id=%s user_id=%s", claim_id, user_id, exc_info=True)
+            raise
         outcome, feedback = _map_bedrock_result(grading)
 
     # If hints were used, override to neutral when the student got it right
@@ -248,6 +254,11 @@ async def evaluate_student_response(
 
     # Flush so response reflects latest state (commit handled by dependency)
     await db.flush()
+
+    logger.info(
+        "Evaluation complete: user_id=%s claim_id=%s outcome=%s xp_awarded=%d new_rating=%s new_status=%s",
+        user_id, claim_id, outcome, xp_awarded, new_rating, new_status,
+    )
 
     return {
         "attempt_id": attempt.id,

@@ -37,6 +37,7 @@ async def create_workspace(
     )
     db.add(workspace)
     await db.flush()
+    logger.info("Created workspace: workspace_id=%d, user_id=%s", workspace.id, user_id)
     return workspace
 
 
@@ -86,7 +87,6 @@ async def get_user_workspaces(
         )
         student_shared = list(student_shared_result.scalars().all())
 
-    # Deduplicate (teacher might also own the shared workspace)
     seen_ids: set[int] = set()
     combined: list[Workspace] = []
     for ws in personal + teacher_shared + student_shared:
@@ -94,6 +94,7 @@ async def get_user_workspaces(
             seen_ids.add(ws.id)
             combined.append(ws)
 
+    logger.debug("Fetched workspaces: user_id=%s, count=%d", user_id, len(combined))
     return combined
 
 
@@ -108,6 +109,7 @@ async def get_workspace_detail(
     """
     workspace = await db.get(Workspace, workspace_id)
     if workspace is None:
+        logger.warning("Workspace not found: workspace_id=%d", workspace_id)
         raise ValueError("Workspace not found")
 
     # Access check: owner, or enrolled student in the classroom
@@ -124,6 +126,7 @@ async def get_workspace_detail(
         has_access = enrollment is not None
 
     if not has_access:
+        logger.warning("Access denied to workspace: workspace_id=%d, user_id=%s", workspace_id, user_id)
         raise ValueError("Access denied to this workspace")
 
     # Count topics
@@ -180,4 +183,5 @@ async def delete_workspace(
 
     await db.delete(workspace)
     await db.flush()
+    logger.info("Deleted workspace: workspace_id=%d, user_id=%s", workspace_id, user_id)
     return True

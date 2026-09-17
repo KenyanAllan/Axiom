@@ -261,8 +261,8 @@ export function GlossaryTab({ userId, userRole, onViewSource }: GlossaryTabProps
     try {
       const data = await fetchGlossaryTerms(userId);
       if (data.length > 0) setTerms(data);
-    } catch {
-      // API not available — keep demo fallback
+    } catch (err) {
+      console.error("GlossaryTab: failed to load glossary terms:", err);
     } finally {
       setLoading(false);
     }
@@ -302,8 +302,8 @@ export function GlossaryTab({ userId, userRole, onViewSource }: GlossaryTabProps
               )
             );
           }
-        } catch {
-          // API unavailable — filter demo data locally
+        } catch (err) {
+          console.error("GlossaryTab: glossary search failed:", err);
           const q = query.toLowerCase();
           setTerms(
             DEMO_GLOSSARY.filter(
@@ -340,8 +340,8 @@ export function GlossaryTab({ userId, userRole, onViewSource }: GlossaryTabProps
       setFormTerm("");
       setFormDefinition("");
       setFormSourceDocId(undefined);
-    } catch {
-      // handle error
+    } catch (err) {
+      console.error("GlossaryTab: failed to create glossary term:", err);
     } finally {
       setSaving(false);
     }
@@ -360,8 +360,8 @@ export function GlossaryTab({ userId, userRole, onViewSource }: GlossaryTabProps
       );
       setSelectedTerm(updated);
       setMode("detail");
-    } catch {
-      // handle error
+    } catch (err) {
+      console.error("GlossaryTab: failed to update glossary term:", err);
     } finally {
       setSaving(false);
     }
@@ -375,8 +375,8 @@ export function GlossaryTab({ userId, userRole, onViewSource }: GlossaryTabProps
         setSelectedTerm(null);
         setMode("list");
       }
-    } catch {
-      // handle error
+    } catch (err) {
+      console.error("GlossaryTab: failed to delete glossary term:", err);
     }
   };
 
@@ -396,7 +396,7 @@ export function GlossaryTab({ userId, userRole, onViewSource }: GlossaryTabProps
     setFormTerm("");
     setFormDefinition("");
     setFormSourceDocId(undefined);
-    listSourceDocs(userId).then(setSourceDocs).catch(() => {});
+    listSourceDocs(userId).then(setSourceDocs).catch((err) => console.error("GlossaryTab: failed to list source docs:", err));
     setMode("create");
   };
 

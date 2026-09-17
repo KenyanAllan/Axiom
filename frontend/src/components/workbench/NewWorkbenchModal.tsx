@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from "react";
 import { X, Upload, FileText, Loader2 } from "lucide-react";
-import { createWorkspace, uploadSourceDoc } from "@/lib/api";
+import { createWorkbench, uploadSourceDoc } from "@/lib/api";
 
 interface NewWorkbenchModalProps {
   userId: string;
@@ -59,13 +59,13 @@ export function NewWorkbenchModal({
     setError(null);
     setSubmitting(true);
     try {
-      const workspace = await createWorkspace(
+      const workbench = await createWorkbench(
         userId,
         name.trim(),
         description.trim() || undefined
       );
       for (const file of files) {
-        await uploadSourceDoc(userId, file, workspace.id);
+        await uploadSourceDoc(userId, file, workbench.id);
       }
       onCreated();
     } catch (err) {

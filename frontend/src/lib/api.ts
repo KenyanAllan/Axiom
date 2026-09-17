@@ -19,7 +19,7 @@ import type {
   SourceDocument,
   TopicSummary,
   UserProfile,
-  WorkspaceResponse,
+  WorkbenchResponse,
 } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -171,6 +171,87 @@ export async function fetchClaims(
   return res.json();
 }
 
+export async function createTopic(
+  userId: string,
+  title: string,
+  summary?: string,
+  workspaceId: number = DEMO_WORKSPACE_ID
+): Promise<TopicSummary> {
+  const res = await fetch(`${BASE}/api/topics`, {
+    method: "POST",
+    headers: headers(userId),
+    body: JSON.stringify({ workspace_id: workspaceId, title, summary: summary || null }),
+  });
+  if (!res.ok) throw new Error(`Create topic failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateTopic(
+  userId: string,
+  topicId: string,
+  data: { title?: string; summary?: string }
+): Promise<TopicSummary> {
+  const res = await fetch(`${BASE}/api/topics/${topicId}`, {
+    method: "PUT",
+    headers: headers(userId),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Update topic failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteTopic(
+  userId: string,
+  topicId: string
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/topics/${topicId}`, {
+    method: "DELETE",
+    headers: headers(userId),
+  });
+  if (!res.ok) throw new Error(`Delete topic failed: ${res.status}`);
+}
+
+export async function createClaim(
+  userId: string,
+  topicId: string,
+  title: string,
+  content: string,
+  rubric?: string
+): Promise<ClaimResponse> {
+  const res = await fetch(`${BASE}/api/claims`, {
+    method: "POST",
+    headers: headers(userId),
+    body: JSON.stringify({ topic_id: topicId, title, content, rubric: rubric || null }),
+  });
+  if (!res.ok) throw new Error(`Create claim failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateClaim(
+  userId: string,
+  claimId: string,
+  data: { title?: string; content?: string; rubric?: string }
+): Promise<ClaimResponse> {
+  const res = await fetch(`${BASE}/api/claims/${claimId}`, {
+    method: "PUT",
+    headers: headers(userId),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Update claim failed: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteClaim(
+  userId: string,
+  claimId: string
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/claims/${claimId}`, {
+    method: "DELETE",
+    headers: headers(userId),
+  });
+  if (!res.ok) throw new Error(`Delete claim failed: ${res.status}`);
+}
+
 // ── Graph (node map) ──────────────────────────────────────────────────────────
 
 export async function fetchGraph(
@@ -296,6 +377,17 @@ export async function getChatSession(
   });
   if (!res.ok) throw new Error(`Get chat session failed: ${res.status}`);
   return res.json();
+}
+
+export async function deleteChatSession(
+  userId: string,
+  sessionId: number
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/chat/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: headers(userId),
+  });
+  if (!res.ok) throw new Error(`Delete chat session failed: ${res.status}`);
 }
 
 export async function sendChatMessage(
@@ -632,29 +724,29 @@ export async function generateAudioOverview(
   return res.json();
 }
 
-// ── Workspaces ──────────────────────────────────────────────────────────────
+// ── Workbenches ─────────────────────────────────────────────────────────────
 
-export async function listWorkspaces(
+export async function listWorkbenches(
   userId: string
-): Promise<WorkspaceResponse[]> {
+): Promise<WorkbenchResponse[]> {
   const res = await fetch(`${BASE}/api/workspaces`, {
     headers: headers(userId),
   });
-  if (!res.ok) throw new Error(`List workspaces failed: ${res.status}`);
+  if (!res.ok) throw new Error(`List workbenches failed: ${res.status}`);
   const data = await res.json();
   return data.workspaces;
 }
 
-export async function createWorkspace(
+export async function createWorkbench(
   userId: string,
   title: string,
   description?: string
-): Promise<WorkspaceResponse> {
+): Promise<WorkbenchResponse> {
   const res = await fetch(`${BASE}/api/workspaces`, {
     method: "POST",
     headers: headers(userId),
     body: JSON.stringify({ title, description: description || null }),
   });
-  if (!res.ok) throw new Error(`Create workspace failed: ${res.status}`);
+  if (!res.ok) throw new Error(`Create workbench failed: ${res.status}`);
   return res.json();
 }

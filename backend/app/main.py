@@ -98,7 +98,8 @@ async def health():
         async with async_session_factory() as session:
             await session.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception:
+    except Exception as exc:
+        logger.warning("Health check: database unavailable: %s", exc)
         checks["database"] = "unavailable"
 
     try:
@@ -106,7 +107,8 @@ async def health():
         r = redis_lib.from_url(settings.redis_url, socket_connect_timeout=2)
         r.ping()
         checks["redis"] = "ok"
-    except Exception:
+    except Exception as exc:
+        logger.warning("Health check: Redis unavailable: %s", exc)
         checks["redis"] = "unavailable"
 
     all_ok = all(v == "ok" for v in checks.values())

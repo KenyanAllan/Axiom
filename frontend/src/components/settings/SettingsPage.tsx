@@ -113,7 +113,7 @@ export function SettingsPage({ user, settings, onUpdateProfile, onUpdateSetting 
     onUpdateProfile({ email: trimmed });
     setEmailSaved(true);
     setTimeout(() => setEmailSaved(false), 2000);
-    updateUserProfile(user.id, { email: trimmed || null }).catch(() => {});
+    updateUserProfile(user.id, { email: trimmed || null }).catch((err) => console.error("SettingsPage: failed to update email:", err));
   };
 
   const handleChangePassword = () => {
@@ -148,7 +148,7 @@ export function SettingsPage({ user, settings, onUpdateProfile, onUpdateSetting 
 
   const saveAvatar = (avatar: string) => {
     onUpdateProfile({ avatar });
-    updateUserProfile(user.id, { avatar }).catch(() => {});
+    updateUserProfile(user.id, { avatar }).catch((err) => console.error("SettingsPage: failed to update avatar:", err));
   };
 
   const handleRandomAvatar = () => {

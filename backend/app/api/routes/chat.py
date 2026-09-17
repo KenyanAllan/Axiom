@@ -345,6 +345,24 @@ async def get_session(
     return ChatSessionResponse.model_validate(session)
 
 
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(
+    session_id: int,
+    user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a chat session and all its messages."""
+    stmt = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.user_id == user_id,
+    )
+    session = (await db.execute(stmt)).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    await db.delete(session)
+    await db.flush()
+
+
 @router.post(
     "/sessions/{session_id}/messages",
     response_model=ChatMessageResponse,
@@ -366,6 +384,8 @@ async def send_message(
     4. Calls Bedrock with tool definitions — model may call tools in a loop.
     5. Saves and returns the assistant message with sources and tool metadata.
     """
+    logger.info("send_message: user_id=%s session_id=%s", user_id, session_id)
+
     # Verify session ownership
     stmt = select(ChatSession).where(
         ChatSession.id == session_id,
@@ -412,6 +432,9 @@ async def send_message(
     rag_sources: list[dict[str, Any]] = []
     context_parts: list[str] = []
 
+    if embedding is None:
+        logger.info("RAG skipped: embedding generation failed for session_id=%s", session_id)
+
     if embedding is not None:
         claim_stmt = (
             select(
@@ -448,6 +471,9 @@ async def send_message(
                 f"[{row.topic_title} > {row.title}]: {row.content}"
             )
 
+    if not rag_sources:
+        logger.info("RAG context yielded zero results for session_id=%s", session_id)
+
     # 4. Call Bedrock with tool-use loop
     context_str = (
         "\n\n".join(context_parts)
@@ -455,6 +481,8 @@ async def send_message(
         else "No relevant context found in the knowledge base."
     )
 
+    import time as _time
+    _bedrock_start = _time.monotonic()
     rag_result = await _rag_converse_with_tools(
         context=context_str,
         user_message=body.content,
@@ -465,6 +493,8 @@ async def send_message(
         classroom_id=classroom_id,
         conversation_history=conversation_history,
     )
+    _bedrock_elapsed = _time.monotonic() - _bedrock_start
+    logger.info("Bedrock converse completed in %.2fs for session_id=%s", _bedrock_elapsed, session_id)
 
     # 5. Save and return assistant message
     sources_meta: Any = rag_sources if rag_sources else None

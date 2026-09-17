@@ -31,7 +31,7 @@ function load(): AppSettings {
       if (parsed.fontScale === 1) parsed.fontScale = DEFAULTS.fontScale;
       return parsed;
     }
-  } catch {}
+  } catch (err) { console.warn("use-settings: failed to parse stored settings:", err); }
   return DEFAULTS;
 }
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -19,6 +20,8 @@ from app.schemas.activities import (
     TopicDetailResponse,
     TopicSummary,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["topics"])
 
@@ -106,6 +109,7 @@ async def list_topics(
     )
     result = await db.execute(stmt)
     topics = result.scalars().all()
+    logger.debug("Listed topics: workspace_id=%d, count=%d", workspace_id, len(topics))
     return [
         TopicSummary(id=t.id, slug=t.slug, title=t.title, summary=t.summary)
         for t in topics
@@ -125,6 +129,7 @@ async def get_topic(
     stmt = select(Topic).where(Topic.slug == slug)
     topic = (await db.execute(stmt)).scalar_one_or_none()
     if topic is None:
+        logger.warning("Topic not found: slug=%s", slug)
         raise HTTPException(status_code=404, detail=f"Topic '{slug}' not found")
 
     # Claims
@@ -165,6 +170,7 @@ async def get_topic(
         mastered_count = (await db.execute(mastery_stmt)).scalar_one()
         prereq_mastery[p.id] = mastered_count == len(p.claims)
 
+    logger.debug("Fetched topic detail: slug=%s, claims=%d", slug, len(claims))
     return TopicDetailResponse(
         topic=TopicSummary(
             id=topic.id, slug=topic.slug, title=topic.title, summary=topic.summary
@@ -226,6 +232,7 @@ async def get_frontier(
     """
     rows = (await db.execute(FRONTIER_CTE_SQL, {"user_id": user_id})).all()
 
+    logger.debug("Fetched frontier: user_id=%s, topics=%d", user_id, len(rows))
     return FrontierResponse(
         frontier=[
             FrontierTopic(
@@ -258,6 +265,7 @@ async def create_topic(
         await db.execute(select(Topic).where(Topic.slug == slug))
     ).scalar_one_or_none()
     if existing is not None:
+        logger.warning("Duplicate topic slug: slug=%s", slug)
         raise HTTPException(status_code=409, detail=f"Topic with slug '{slug}' already exists")
 
     topic = Topic(
@@ -274,8 +282,10 @@ async def create_topic(
     for prereq_id in body.prerequisite_ids:
         prereq = await db.get(Topic, prereq_id)
         if prereq is None:
+            logger.warning("Prerequisite not found: prereq_id=%s", prereq_id)
             raise HTTPException(status_code=404, detail=f"Prerequisite topic '{prereq_id}' not found")
         if await would_create_cycle(db, topic_id, prereq_id):
+            logger.warning("Cycle detected: topic_id=%s, prereq_id=%s", topic_id, prereq_id)
             raise HTTPException(
                 status_code=400,
                 detail=f"Adding prerequisite '{prereq_id}' would create a cycle",
@@ -283,6 +293,7 @@ async def create_topic(
         db.add(TopicPrerequisite(topic_id=topic_id, prerequisite_id=prereq_id))
 
     await db.flush()
+    logger.info("Created topic: topic_id=%s, title=%s", topic.id, topic.title)
     return TopicSummary(id=topic.id, slug=topic.slug, title=topic.title, summary=topic.summary)
 
 
@@ -299,6 +310,7 @@ async def update_topic(
     """Update a topic's title and/or summary."""
     topic = await db.get(Topic, topic_id)
     if topic is None:
+        logger.warning("Topic not found for update: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
 
     if body.title is not None:
@@ -322,6 +334,7 @@ async def delete_topic(
     """Delete a topic. Claims cascade via FK."""
     topic = await db.get(Topic, topic_id)
     if topic is None:
+        logger.warning("Topic not found for deletion: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
 
     await db.delete(topic)
@@ -342,10 +355,12 @@ async def add_prerequisite(
     """Add a prerequisite edge to a topic (with cycle detection)."""
     topic = await db.get(Topic, topic_id)
     if topic is None:
+        logger.warning("Topic not found for prerequisite add: topic_id=%s", topic_id)
         raise HTTPException(status_code=404, detail=f"Topic '{topic_id}' not found")
 
     prereq = await db.get(Topic, body.prerequisite_id)
     if prereq is None:
+        logger.warning("Prerequisite topic not found: prerequisite_id=%s", body.prerequisite_id)
         raise HTTPException(status_code=404, detail=f"Prerequisite topic '{body.prerequisite_id}' not found")
 
     # Check if edge already exists
@@ -358,9 +373,11 @@ async def add_prerequisite(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        logger.warning("Duplicate prerequisite edge: topic_id=%s, prereq_id=%s", topic_id, body.prerequisite_id)
         raise HTTPException(status_code=409, detail="Prerequisite edge already exists")
 
     if await would_create_cycle(db, topic_id, body.prerequisite_id):
+        logger.warning("Cycle detected in DAG: topic_id=%s, prereq_id=%s", topic_id, body.prerequisite_id)
         raise HTTPException(
             status_code=400,
             detail="Adding this prerequisite would create a cycle in the topic DAG",
@@ -389,6 +406,7 @@ async def remove_prerequisite(
         )
     )
     if result.rowcount == 0:
+        logger.warning("Prerequisite edge not found: topic_id=%s, prereq_id=%s", topic_id, prerequisite_id)
         raise HTTPException(status_code=404, detail="Prerequisite edge not found")
     await db.flush()
     return Response(status_code=204)

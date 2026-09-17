@@ -35,7 +35,17 @@ import type { CompletedActivityReview } from "@/components/activity/CompletedAct
 import { GlossaryTab } from "@/components/glossary/GlossaryTab";
 import { GlossaryInlineCard } from "@/components/glossary/GlossaryInlineCard";
 import type { UserRole, ViewTab, GraphTopic, GraphEdge } from "@/lib/types";
-import { createChatSession, sendChatMessage, fetchGraph } from "@/lib/api";
+import {
+  createChatSession,
+  sendChatMessage,
+  fetchGraph,
+  createTopic,
+  updateTopic,
+  deleteTopic as apiDeleteTopic,
+  createClaim as apiCreateClaim,
+  updateClaim as apiUpdateClaim,
+  deleteClaim as apiDeleteClaim,
+} from "@/lib/api";
 import { SettingsPage, parseAvatar } from "@/components/settings/SettingsPage";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -62,7 +72,7 @@ interface CenterStageProps {
   onActivitiesChange: (activities: Activity[]) => void;
   onExpandActivity: (id: string) => void;
   wikiPages: WikiPage[];
-  onWikiPagesChange: (pages: WikiPage[]) => void;
+  onWikiPagesChange: React.Dispatch<React.SetStateAction<WikiPage[]>>;
   wikiPageId: string | null;
   onWikiPageSelect: (id: string | null) => void;
   pendingChatMessage?: { text: string; title?: string } | null;
@@ -488,7 +498,7 @@ export function CenterStage({
           setGraphNodes(computeNodeLayout(data.topics, data.edges));
         }
       })
-      .catch(() => {});
+      .catch((err) => console.error("CenterStage: failed to fetch graph data:", err));
   }, [userId]);
 
   const addClaimContext = useCallback((claim: WikiClaim, pageTitle: string) => {
@@ -534,8 +544,8 @@ export function CenterStage({
         onSessionsChange((prev: ChatSession[]) =>
           prev.map((s) => (s.id === localId ? updated : s))
         );
-      } catch {
-        // keep local-only session
+      } catch (err) {
+        console.error("CenterStage: failed to create backend chat session:", err);
       }
     },
     [sessions, onSessionsChange, onActiveSessionIdChange, userId]
@@ -605,7 +615,8 @@ export function CenterStage({
                 sources: reply.sources,
               },
             ]);
-          } catch {
+          } catch (err) {
+            console.error("CenterStage: failed to send chat message:", err);
             setMessages((prev) => [
               ...prev,
               {
@@ -619,8 +630,8 @@ export function CenterStage({
             setIsTyping(false);
           }
           return;
-        } catch {
-          // fall through to local-only handling
+        } catch (err) {
+          console.error("CenterStage: failed to create session for new chat:", err);
         }
       }
 
@@ -655,8 +666,8 @@ export function CenterStage({
           ]);
           setIsTyping(false);
           return;
-        } catch {
-          // fall through to fake response
+        } catch (err) {
+          console.error("CenterStage: failed to send message to existing session:", err);
         }
       }
 
@@ -722,8 +733,8 @@ export function CenterStage({
       recRef.current = rec;
       rec.start();
       setIsListening(true);
-    } catch {
-      // browser does not support speech recognition
+    } catch (err) {
+      console.warn("CenterStage: speech recognition not supported:", err);
     }
   }, [isListening]);
 
@@ -811,6 +822,7 @@ export function CenterStage({
             onSelectPage={onWikiPageSelect}
             onClaimClick={addClaimContext}
             isTeacher={isTeacher}
+            userId={userId}
             onViewSource={onViewSource}
             activeTopics={new Set(activities.map((a) => a.topic))}
           />
@@ -933,8 +945,8 @@ function ChatBubble({ message, onTabChange, userAvatar }: { message: ChatMessage
       await navigator.clipboard.writeText(message.text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // clipboard not available
+    } catch (err) {
+      console.warn("CenterStage: clipboard not available:", err);
     }
   };
 
@@ -1047,11 +1059,12 @@ function ChatBubble({ message, onTabChange, userAvatar }: { message: ChatMessage
 
 interface DemoWikiTabProps {
   pages: WikiPage[];
-  onPagesChange: (pages: WikiPage[]) => void;
+  onPagesChange: React.Dispatch<React.SetStateAction<WikiPage[]>>;
   selectedPageId: string | null;
   onSelectPage: (id: string | null) => void;
   onClaimClick: (claim: WikiClaim, pageTitle: string) => void;
   isTeacher: boolean;
+  userId: string;
   onViewSource?: (sourceDocumentId: string) => void;
   activeTopics?: Set<string>;
 }
@@ -1070,6 +1083,7 @@ function DemoWikiTab({
   onSelectPage,
   onClaimClick,
   isTeacher,
+  userId,
   onViewSource,
   activeTopics,
 }: DemoWikiTabProps) {
@@ -1135,12 +1149,12 @@ function DemoWikiTab({
     setMode("edit-page");
   };
 
-  const savePage = () => {
+  const savePage = async () => {
     if (!fTitle.trim()) return;
     if (mode === "create-page") {
-      const id = `wiki_${++_wikiCounter}`;
+      const tempId = `wiki_${++_wikiCounter}`;
       const newPage: WikiPage = {
-        id,
+        id: tempId,
         title: fTitle.trim(),
         aliases: parseCSV(fAliases),
         snippet: fSnippet.trim(),
@@ -1148,7 +1162,16 @@ function DemoWikiTab({
         claims: [],
       };
       onPagesChange([...pages, newPage]);
-      onSelectPage(id);
+      onSelectPage(tempId);
+      try {
+        const created = await createTopic(userId, fTitle.trim(), fSnippet.trim());
+        onPagesChange((prev: WikiPage[]) =>
+          prev.map((p) => (p.id === tempId ? { ...p, id: created.id } : p))
+        );
+        onSelectPage(created.id);
+      } catch (err) {
+        console.error("CenterStage: failed to create topic:", err);
+      }
     } else if (mode === "edit-page" && page) {
       onPagesChange(
         pages.map((p) =>
@@ -1163,13 +1186,23 @@ function DemoWikiTab({
             : p
         )
       );
+      try {
+        await updateTopic(userId, page.id, { title: fTitle.trim(), summary: fSnippet.trim() });
+      } catch (err) {
+        console.error("CenterStage: failed to update topic:", err);
+      }
     }
     setMode("view");
   };
 
-  const deletePage = (id: string) => {
+  const deletePage = async (id: string) => {
     onPagesChange(pages.filter((p) => p.id !== id));
     if (selectedPageId === id) onSelectPage(null);
+    try {
+      await apiDeleteTopic(userId, id);
+    } catch (err) {
+      console.error("CenterStage: failed to delete topic:", err);
+    }
   };
 
   // ── Claim CRUD ────────────────────────────────────────────────────────────
@@ -1189,7 +1222,7 @@ function DemoWikiTab({
     setMode("edit-claim");
   };
 
-  const saveClaim = () => {
+  const saveClaim = async () => {
     if (!page || !fCTitle.trim()) return;
     const data = {
       title: fCTitle.trim(),
@@ -1197,10 +1230,8 @@ function DemoWikiTab({
       anchors: parseCSV(fCAnchors),
     };
     if (mode === "create-claim") {
-      const newClaim: WikiClaim = {
-        id: `claim_${++_wikiCounter}`,
-        ...data,
-      };
+      const tempId = `claim_${++_wikiCounter}`;
+      const newClaim: WikiClaim = { id: tempId, ...data };
       onPagesChange(
         pages.map((p) =>
           p.id === page.id
@@ -1208,6 +1239,18 @@ function DemoWikiTab({
             : p
         )
       );
+      try {
+        const created = await apiCreateClaim(userId, page.id, data.title, data.description, data.anchors[0]);
+        onPagesChange((prev: WikiPage[]) =>
+          prev.map((p) =>
+            p.id === page.id
+              ? { ...p, claims: p.claims.map((c) => (c.id === tempId ? { ...c, id: created.id } : c)) }
+              : p
+          )
+        );
+      } catch (err) {
+        console.error("CenterStage: failed to create claim:", err);
+      }
     } else if (mode === "edit-claim" && editClaimId) {
       onPagesChange(
         pages.map((p) =>
@@ -1221,12 +1264,17 @@ function DemoWikiTab({
             : p
         )
       );
+      try {
+        await apiUpdateClaim(userId, editClaimId, { title: data.title, content: data.description, rubric: data.anchors[0] });
+      } catch (err) {
+        console.error("CenterStage: failed to update claim:", err);
+      }
     }
     setMode("view");
     setEditClaimId(null);
   };
 
-  const deleteClaim = (claimId: string) => {
+  const deleteClaim = async (claimId: string) => {
     if (!page) return;
     onPagesChange(
       pages.map((p) =>
@@ -1235,6 +1283,11 @@ function DemoWikiTab({
           : p
       )
     );
+    try {
+      await apiDeleteClaim(userId, claimId);
+    } catch (err) {
+      console.error("CenterStage: failed to delete claim:", err);
+    }
   };
 
   // ── Shared form components ────────────────────────────────────────────────

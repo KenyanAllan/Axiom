@@ -15,8 +15,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { parseAvatar } from "@/components/settings/SettingsPage";
 import { NewWorkbenchModal } from "@/components/workbench/NewWorkbenchModal";
-import { listWorkspaces } from "@/lib/api";
-import type { UserProfile, ViewTab, WorkspaceResponse } from "@/lib/types";
+import { listWorkbenches } from "@/lib/api";
+import type { UserProfile, ViewTab, WorkbenchResponse } from "@/lib/types";
 
 interface LeftSidebarProps {
   user: UserProfile;
@@ -30,7 +30,7 @@ interface LeftSidebarProps {
 export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentView, onToggleStudentView }: LeftSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [workspaces, setWorkspaces] = useState<WorkspaceResponse[]>([]);
+  const [workbenches, setWorkbenches] = useState<WorkbenchResponse[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
 
   const initials = user.display_name
@@ -39,10 +39,10 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
     .join("")
     .slice(0, 2);
 
-  const loadWorkspaces = useCallback(() => {
-    listWorkspaces(user.id)
+  const loadWorkbenches = useCallback(() => {
+    listWorkbenches(user.id)
       .then((ws) => {
-        setWorkspaces(ws);
+        setWorkbenches(ws);
         if (ws.length > 0 && activeId === null) {
           setActiveId(ws[0].id);
         }
@@ -51,12 +51,12 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
   }, [user.id, activeId]);
 
   useEffect(() => {
-    loadWorkspaces();
-  }, [loadWorkspaces]);
+    loadWorkbenches();
+  }, [loadWorkbenches]);
 
   const handleCreated = () => {
     setShowModal(false);
-    loadWorkspaces();
+    loadWorkbenches();
   };
 
   return (
@@ -141,7 +141,7 @@ export function LeftSidebar({ user, onLogout, activeTab, onTabChange, studentVie
             </p>
           )}
           <nav className="space-y-0.5">
-            {workspaces.map((ws) => (
+            {workbenches.map((ws) => (
               <button
                 key={ws.id}
                 onClick={() => setActiveId(ws.id)}

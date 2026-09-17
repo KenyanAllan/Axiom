@@ -268,9 +268,9 @@ export interface GlossarySearchResponse {
   total: number;
 }
 
-// ── Workspace types ──────────────────────────────────────────────────────────
+// ── Workbench types ─────────────────────────────────────────────────────────
 
-export interface WorkspaceResponse {
+export interface WorkbenchResponse {
   id: number;
   user_id: string;
   title: string;

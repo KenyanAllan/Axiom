@@ -681,8 +681,8 @@ async function callEvaluate(
         is_correct: data.outcome === "understood",
         feedback: data.feedback,
       };
-    } catch {
-      // Fall through to evaluate endpoint
+    } catch (err) {
+      console.error("ActivityFeed: submitAttempt failed, falling back to evaluate:", err);
     }
   }
 
@@ -696,8 +696,8 @@ async function callEvaluate(
       is_correct: data.outcome === "understood",
       feedback: data.feedback,
     };
-  } catch {
-    // Backend not available — return null so callers use hardcoded fallback
+  } catch (err) {
+    console.error("ActivityFeed: evaluateResponse failed, using fallback:", err);
     return null;
   }
 }
@@ -787,8 +787,8 @@ function VoiceMicButton({
       recRef.current = rec;
       rec.start();
       setListening(true);
-    } catch {
-      // browser does not support speech recognition
+    } catch (err) {
+      console.warn("ActivityFeed: speech recognition not supported:", err);
     }
   }, [listening, onTranscript]);
 
@@ -921,7 +921,7 @@ function FlashcardDeckActivity({ activity, onSaveResult }: RendererProps) {
     try {
       const parsed = JSON.parse(activity.lastResponse);
       if (Array.isArray(parsed) && parsed.length === cards.length) return parsed as FlashAssessment[];
-    } catch { /* ignore */ }
+    } catch (err) { console.warn("ActivityFeed: failed to parse saved flashcard assessments:", err); }
     return null;
   })();
 
@@ -1235,7 +1235,7 @@ function QuizActivity({ activity, onDiscussWithTutor, onSaveResult }: RendererPr
 
   const restoredAnswers: Record<number, any> = (() => {
     if (!activity.lastResponse) return {};
-    try { return JSON.parse(activity.lastResponse); } catch { return {}; }
+    try { return JSON.parse(activity.lastResponse); } catch (err) { console.warn("ActivityFeed: failed to parse quiz answers:", err); return {}; }
   })();
   const isCompleted = !!activity.lastFeedback;
 

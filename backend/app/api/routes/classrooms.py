@@ -55,6 +55,7 @@ async def _require_teacher(user_id: str, db: AsyncSession) -> User:
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if user.role != "teacher":
+        logger.warning("Non-teacher attempted teacher action: user_id=%s, role=%s", user_id, user.role)
         raise HTTPException(status_code=403, detail="Only teachers can perform this action")
     return user
 
@@ -65,6 +66,7 @@ async def _require_student(user_id: str, db: AsyncSession) -> User:
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if user.role != "student":
+        logger.warning("Non-student attempted join: user_id=%s, role=%s", user_id, user.role)
         raise HTTPException(status_code=403, detail="Only students can join classrooms")
     return user
 
@@ -81,6 +83,7 @@ async def create_classroom_endpoint(
     """Create a new classroom (teacher only)."""
     await _require_teacher(user_id, db)
     result = await create_classroom(db=db, teacher_id=user_id, title=body.title)
+    logger.info("Created classroom: classroom_id=%s, teacher_id=%s", result.id, user_id)
     return result
 
 
@@ -98,7 +101,9 @@ async def join_classroom_endpoint(
     try:
         result = await join_classroom(db=db, student_id=user_id, join_code=body.join_code)
     except ValueError as exc:
+        logger.warning("Join classroom failed: student_id=%s, join_code=%s, error=%s", user_id, body.join_code, exc)
         raise HTTPException(status_code=400, detail=str(exc))
+    logger.info("Student joined classroom: student_id=%s, classroom_id=%s", user_id, result.classroom_id)
     return result
 
 
@@ -113,6 +118,7 @@ async def list_classrooms(
     """List classrooms. Teachers see their created classrooms; students see enrolled ones."""
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if user is None:
+        logger.warning("User not found for classroom list: user_id=%s", user_id)
         raise HTTPException(status_code=404, detail="User not found")
 
     if user.role == "teacher":
@@ -157,6 +163,7 @@ async def get_classroom(
     try:
         result = await get_classroom_detail(db=db, classroom_id=classroom_id, teacher_id=user_id)
     except ValueError as exc:
+        logger.warning("Classroom detail fetch failed: classroom_id=%d, error=%s", classroom_id, exc)
         raise HTTPException(status_code=404, detail=str(exc))
     return result
 
@@ -175,6 +182,7 @@ async def classroom_diagnostic(
     try:
         result = await get_diagnostic(db=db, teacher_id=user_id, classroom_id=classroom_id)
     except ValueError as exc:
+        logger.warning("Classroom diagnostic failed: classroom_id=%d, error=%s", classroom_id, exc)
         raise HTTPException(status_code=404, detail=str(exc))
     return result
 
@@ -196,6 +204,7 @@ async def student_progress(
             db=db, teacher_id=user_id, student_id=student_id, classroom_id=classroom_id
         )
     except ValueError as exc:
+        logger.warning("Student progress fetch failed: student_id=%s, classroom_id=%d, error=%s", student_id, classroom_id, exc)
         raise HTTPException(status_code=404, detail=str(exc))
     return result
 
@@ -219,6 +228,7 @@ async def broadcast_activity(
             activity_id=body.activity_id,
         )
     except ValueError as exc:
+        logger.warning("Broadcast failed: classroom_id=%d, activity_id=%s, error=%s", classroom_id, body.activity_id, exc)
         raise HTTPException(status_code=400, detail=str(exc))
     return {"status": "broadcast", "activity_id": body.activity_id}
 
@@ -242,6 +252,7 @@ async def classroom_activity_history(
             limit=limit, offset=offset,
         )
     except ValueError as exc:
+        logger.warning("Activity history fetch failed: classroom_id=%d, error=%s", classroom_id, exc)
         raise HTTPException(status_code=404, detail=str(exc))
     return result
 
@@ -259,6 +270,7 @@ async def classroom_leaderboard(
     # Check classroom exists
     classroom = await db.get(Classroom, classroom_id)
     if classroom is None:
+        logger.warning("Classroom not found for leaderboard: classroom_id=%d", classroom_id)
         raise HTTPException(status_code=404, detail="Classroom not found")
 
     # Allow teacher OR enrolled student
@@ -268,6 +280,7 @@ async def classroom_leaderboard(
 
     if user.role == "teacher":
         if classroom.teacher_id != user_id:
+            logger.warning("Teacher does not own classroom: user_id=%s, classroom_id=%d", user_id, classroom_id)
             raise HTTPException(status_code=403, detail="You do not own this classroom")
     else:
         # Check student is enrolled
@@ -280,6 +293,7 @@ async def classroom_leaderboard(
             )
         ).scalar_one_or_none()
         if enrollment is None:
+            logger.warning("Student not enrolled: student_id=%s, classroom_id=%d", user_id, classroom_id)
             raise HTTPException(status_code=403, detail="You are not enrolled in this classroom")
 
     # Query enrolled students ordered by XP
@@ -319,8 +333,10 @@ async def classroom_chat_history(
 
     classroom = await db.get(Classroom, classroom_id)
     if classroom is None:
+        logger.warning("Classroom not found for chat history: classroom_id=%d", classroom_id)
         raise HTTPException(status_code=404, detail="Classroom not found")
     if classroom.teacher_id != user_id:
+        logger.warning("Teacher does not own classroom for chat history: user_id=%s, classroom_id=%d", user_id, classroom_id)
         raise HTTPException(status_code=403, detail="You do not own this classroom")
 
     msg_count = (
@@ -341,6 +357,7 @@ async def classroom_chat_history(
     )
     rows = (await db.execute(stmt)).all()
 
+    logger.debug("Fetched chat history: classroom_id=%d, sessions=%d", classroom_id, len(rows))
     return {
         "items": [
             {
@@ -372,8 +389,10 @@ async def classroom_chat_session_detail(
 
     classroom = await db.get(Classroom, classroom_id)
     if classroom is None:
+        logger.warning("Classroom not found for session detail: classroom_id=%d", classroom_id)
         raise HTTPException(status_code=404, detail="Classroom not found")
     if classroom.teacher_id != user_id:
+        logger.warning("Teacher does not own classroom for session detail: user_id=%s, classroom_id=%d", user_id, classroom_id)
         raise HTTPException(status_code=403, detail="You do not own this classroom")
 
     stmt = (
@@ -387,10 +406,12 @@ async def classroom_chat_session_detail(
     )
     session = (await db.execute(stmt)).scalar_one_or_none()
     if session is None:
+        logger.warning("Chat session not found: session_id=%d, classroom_id=%d", session_id, classroom_id)
         raise HTTPException(status_code=404, detail="Chat session not found")
 
     student = await db.get(User, session.user_id)
 
+    logger.debug("Fetched chat session detail: session_id=%d, classroom_id=%d", session_id, classroom_id)
     return {
         "session_id": session.id,
         "student_name": student.display_name if student else "Unknown",

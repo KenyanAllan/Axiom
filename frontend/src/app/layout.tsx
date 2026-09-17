@@ -3,9 +3,9 @@ import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Axiom — Knowledge Graph Learning Workspace",
+  title: "Axiom — Knowledge Graph Learning Workbench",
   description:
-    "Axiom: a minimalist, distraction-free technical learning workspace.",
+    "Axiom: a minimalist, distraction-free technical learning workbench.",
 };
 
 export default function RootLayout({

@@ -54,7 +54,9 @@ def calculate_xp_reward(difficulty: int, outcome: str, streak_days: int) -> int:
     streak_mult = calculate_streak_multiplier(streak_days)
 
     raw_xp = (BASE_XP + perf_bonus * diff_mult) * streak_mult
-    return int(raw_xp)
+    xp = int(raw_xp)
+    logger.info("Calculated XP reward: xp=%d, difficulty=%d, outcome=%s, streak_days=%d", xp, difficulty, outcome, streak_days)
+    return xp
 
 
 def compute_level(xp: int) -> int:
@@ -94,4 +96,5 @@ async def update_streak(db: AsyncSession, user: User) -> int:
 
     user.last_active_date = today
 
+    logger.info("Updated streak: user_id=%s, streak_days=%d", user.id, user.streak_days)
     return user.streak_days

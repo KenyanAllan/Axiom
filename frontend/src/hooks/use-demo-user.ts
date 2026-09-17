@@ -32,7 +32,7 @@ function getStoredUsers(): Record<string, UserProfile> {
     if (stored) {
       return { ...DEMO_USERS, ...JSON.parse(stored) };
     }
-  } catch {}
+  } catch (err) { console.warn("use-demo-user: failed to parse stored users:", err); }
   return DEMO_USERS;
 }
 

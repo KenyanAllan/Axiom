@@ -22,11 +22,13 @@ import { useSettings } from "@/hooks/use-settings";
 import type { ViewTab } from "@/lib/types";
 import {
   fetchActivityFeed,
+  fetchActivityQueue,
   fetchTopics,
   fetchClaims,
   listChatSessions,
   getChatSession,
   createChatSession,
+  deleteChatSession,
 } from "@/lib/api";
 import { XP_BY_TYPE } from "@/components/activity/ActivityFeed";
 
@@ -93,7 +95,8 @@ export default function Home() {
                   }),
                 })),
               };
-            } catch {
+            } catch (err) {
+              console.error("page.tsx: failed to load chat session detail:", err);
               return {
                 id: `backend_${s.id}`,
                 backendId: s.id,
@@ -107,33 +110,59 @@ export default function Home() {
           setSessions((prev) => [...prev, ...loaded]);
         }
       })
-      .catch(() => {});
+      .catch((err) => console.error("page.tsx: failed to load chat sessions:", err));
   }, [user?.id]);
 
-  // ── Load activity feed from API ─────────────────────────────────────────
+  // ── Load activity feed + queue from API ──────────────────────────────────
   useEffect(() => {
     if (!user?.id) return;
-    fetchActivityFeed(user.id)
-      .then((data) => {
-        if (data.cards.length > 0) {
-          const mapped: Activity[] = data.cards.map((card) => {
-            const actType = card.diagnostic_type === "feynman"
-              ? "feynman" as const
-              : card.diagnostic_type === "wrong_on_purpose"
-                ? "wrong_on_purpose" as const
-                : "flashcard" as const;
-            return {
-              id: card.claim_id,
-              type: actType,
-              title: card.claim_title,
-              topic: card.topic_title,
-              xp: XP_BY_TYPE[actType] ?? 25,
-            };
-          });
-          setActivities(mapped);
+    const loadFeed = fetchActivityFeed(user.id)
+      .then((data) =>
+        data.cards.map((card): Activity => {
+          const actType = card.diagnostic_type === "feynman"
+            ? "feynman" as const
+            : card.diagnostic_type === "wrong_on_purpose"
+              ? "wrong_on_purpose" as const
+              : "flashcard" as const;
+          return {
+            id: card.claim_id,
+            type: actType,
+            title: card.claim_title,
+            topic: card.topic_title,
+            xp: XP_BY_TYPE[actType] ?? 25,
+          };
+        })
+      )
+      .catch((err) => { console.error("page.tsx: failed to load activity feed:", err); return [] as Activity[]; });
+
+    const loadQueue = fetchActivityQueue(user.id)
+      .then((data) =>
+        data.entries
+          .filter((e) => !e.is_completed)
+          .map((e): Activity => ({
+            id: String(e.activity.id),
+            type: e.activity.type as Activity["type"],
+            title: e.activity.title,
+            topic: "",
+            xp: XP_BY_TYPE[e.activity.type as keyof typeof XP_BY_TYPE] ?? 25,
+            payload: e.activity.payload,
+          }))
+      )
+      .catch((err) => { console.error("page.tsx: failed to load activity queue:", err); return [] as Activity[]; });
+
+    Promise.all([loadFeed, loadQueue]).then(([feedItems, queueItems]) => {
+      const seen = new Set<string>();
+      const merged: Activity[] = [];
+      for (const item of [...queueItems, ...feedItems]) {
+        if (!seen.has(item.id)) {
+          seen.add(item.id);
+          merged.push(item);
         }
-      })
-      .catch(() => {});
+      }
+      if (merged.length > 0) {
+        setActivities(merged);
+      }
+    });
   }, [user?.id]);
 
   // ── Load topics + claims for wiki ───────────────────────────────────────
@@ -161,7 +190,7 @@ export default function Home() {
         });
         setWikiPages(pages);
       })
-      .catch(() => {});
+      .catch((err) => console.error("page.tsx: failed to load topics/claims for wiki:", err));
   }, [user?.id]);
 
   const handleLogout = () => {
@@ -188,6 +217,7 @@ export default function Home() {
   }, []);
 
   const handleDeleteSession = useCallback((id: string) => {
+    const session = sessions.find((s) => s.id === id);
     setSessions((prev) => {
       const remaining = prev.filter((s) => s.id !== id);
       setActiveSessionId((prevId) =>
@@ -195,7 +225,10 @@ export default function Home() {
       );
       return remaining;
     });
-  }, []);
+    if (session?.backendId && user?.id) {
+      deleteChatSession(user.id, session.backendId).catch((err) => console.error("page.tsx: failed to delete backend chat session:", err));
+    }
+  }, [sessions, user?.id]);
 
   const handleCreateNewChat = useCallback(async () => {
     const localId = `new_chat_${Date.now()}`;
@@ -210,8 +243,8 @@ export default function Home() {
         setSessions((prev) =>
           prev.map((s) => (s.id === localId ? { ...s, backendId: backendSession.id } : s))
         );
-      } catch {
-        // keep local-only session
+      } catch (err) {
+        console.error("page.tsx: failed to create backend chat session:", err);
       }
     }
   }, [user?.id]);

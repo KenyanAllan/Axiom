@@ -36,9 +36,9 @@ async def _verify_workspace_access(
     )
     workspace = result.scalar_one_or_none()
     if workspace is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        raise HTTPException(status_code=404, detail="Workbench not found")
     if workspace.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not your workspace")
+        raise HTTPException(status_code=403, detail="Not your workbench")
     return workspace
 
 
@@ -56,7 +56,7 @@ async def _require_teacher(db: AsyncSession, user_id: str) -> User:
 
 @router.get("", response_model=list[GlossaryTermResponse])
 async def list_glossary_terms(
-    workspace_id: int = Query(..., description="Workspace to list terms for"),
+    workspace_id: int = Query(..., description="Workbench to list terms for"),
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[GlossaryTermResponse]:
@@ -110,9 +110,13 @@ async def create_glossary_term(
     if existing is not None:
         raise HTTPException(status_code=409, detail="Term already exists in this workspace")
 
-    embedding = await asyncio.to_thread(
-        generate_embedding, f"{body.term}: {body.definition}"
-    )
+    try:
+        embedding = await asyncio.to_thread(
+            generate_embedding, f"{body.term}: {body.definition}"
+        )
+    except Exception:
+        logger.error("Embedding generation failed for glossary term '%s'", body.term, exc_info=True)
+        raise HTTPException(status_code=502, detail="Embedding generation failed")
 
     term = GlossaryTerm(
         workspace_id=body.workspace_id,
@@ -126,6 +130,7 @@ async def create_glossary_term(
     await db.flush()
     await db.refresh(term)
 
+    logger.info("Glossary term created: id=%s term='%s' workspace_id=%s", term.id, term.term, term.workspace_id)
     return GlossaryTermResponse.model_validate(term)
 
 
@@ -155,12 +160,17 @@ async def update_glossary_term(
         changed = True
 
     if changed:
-        term.embedding = await asyncio.to_thread(
-            generate_embedding, f"{term.term}: {term.definition}"
-        )
+        try:
+            term.embedding = await asyncio.to_thread(
+                generate_embedding, f"{term.term}: {term.definition}"
+            )
+        except Exception:
+            logger.error("Embedding generation failed for glossary term update id=%s", term_id, exc_info=True)
+            raise HTTPException(status_code=502, detail="Embedding generation failed")
 
     await db.flush()
     await db.refresh(term)
+    logger.info("Glossary term updated: id=%s term='%s'", term.id, term.term)
     return GlossaryTermResponse.model_validate(term)
 
 
@@ -182,6 +192,7 @@ async def delete_glossary_term(
 
     await db.delete(term)
     await db.flush()
+    logger.info("Glossary term deleted: id=%s", term_id)
     return None
 
 

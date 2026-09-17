@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import uuid
 from typing import Literal
@@ -16,6 +17,7 @@ from app.core.database import get_db
 from app.core.rate_limit import limiter
 from app.models.tables import User
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 AVATAR_ICONS = ["🧠", "🔬", "📐", "💡", "🎯", "🚀", "⚡", "🧮", "📊", "🎓", "🌟", "🔭", "🧪", "📚", "🎨"]
@@ -78,6 +80,7 @@ async def register(
     # Check if email already taken
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none() is not None:
+        logger.warning("Registration rejected: duplicate email %s", body.email)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A user with this email already exists.",
@@ -99,6 +102,7 @@ async def register(
     await db.flush()
 
     token = create_access_token(user_id)
+    logger.info("User registered: user_id=%s email=%s", user_id, body.email)
     return AuthResponse(
         access_token=token,
         user=UserOut.model_validate(user),
@@ -119,18 +123,21 @@ async def login(
     user = result.scalar_one_or_none()
 
     if user is None or user.hashed_password is None:
+        logger.warning("Login failed: no account for email %s", body.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
         )
 
     if not verify_password(body.password, user.hashed_password):
+        logger.warning("Login failed: wrong password for email %s", body.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
         )
 
     token = create_access_token(user.id)
+    logger.info("User logged in: user_id=%s", user.id)
     return AuthResponse(
         access_token=token,
         user=UserOut.model_validate(user),

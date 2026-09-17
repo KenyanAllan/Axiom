@@ -381,7 +381,7 @@ export function CompletedActivityReviewOverlay({
       : null;
   const quizAnswers: Record<number, any> = (() => {
     if (!quizQuestions || !review.studentResponse) return {};
-    try { return JSON.parse(review.studentResponse); } catch { return {}; }
+    try { return JSON.parse(review.studentResponse); } catch (err) { console.warn("CompletedActivityReviewOverlay: failed to parse student response:", err); return {}; }
   })();
 
   const handleDiscuss = () => {

@@ -262,8 +262,8 @@ export function ClassChatHistory({ userId }: ClassChatHistoryProps) {
             setSessions(history.items);
           }
         }
-      } catch {
-        // keep demo data
+      } catch (err) {
+        console.error("ClassChatHistory: failed to load chat history:", err);
       }
     })();
   }, [userId]);
@@ -294,8 +294,8 @@ export function ClassChatHistory({ userId }: ClassChatHistoryProps) {
           setViewingDetail(detail);
           setLoadingSession(null);
           return;
-        } catch {
-          // fall through
+        } catch (err) {
+          console.error("ClassChatHistory: failed to fetch chat session detail:", err);
         }
       }
 

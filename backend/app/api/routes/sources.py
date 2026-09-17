@@ -72,9 +72,11 @@ async def _verify_workspace_access(
     )
     workspace = result.scalar_one_or_none()
     if workspace is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        logger.warning("Workbench not found: workspace_id=%d", workspace_id)
+        raise HTTPException(status_code=404, detail="Workbench not found")
     if workspace.user_id != user_id:
-        raise HTTPException(status_code=403, detail="Not your workspace")
+        logger.warning("Workbench access denied: workspace_id=%d, user_id=%s", workspace_id, user_id)
+        raise HTTPException(status_code=403, detail="Not your workbench")
     return workspace
 
 
@@ -118,6 +120,7 @@ async def upload_source_direct(
     _settings = get_settings()
     content = await file.read(_settings.upload_max_bytes + 1)
     if len(content) > _settings.upload_max_bytes:
+        logger.warning("Upload rejected — file too large: filename=%s, size=%d", file.filename, len(content))
         raise HTTPException(
             status_code=413,
             detail=f"File too large. Maximum size is {_settings.upload_max_bytes // (1024 * 1024)} MB.",
@@ -255,7 +258,7 @@ async def register_source(
 
 @router.get("", response_model=list[SourceResponse])
 async def list_sources(
-    workspace_id: int = Query(..., description="Workspace to list sources for"),
+    workspace_id: int = Query(..., description="Workbench to list sources for"),
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[SourceResponse]:
@@ -278,6 +281,7 @@ async def list_sources(
         .order_by(SourceDocument.created_at.desc())
     )
     rows = (await db.execute(stmt)).all()
+    logger.debug("Listed sources: workspace_id=%d, count=%d", workspace_id, len(rows))
     results = []
     for doc, claim_count in rows:
         resp = SourceResponse.model_validate(doc)
@@ -307,6 +311,7 @@ async def get_view_url(
     )
     doc = result.scalar_one_or_none()
     if doc is None:
+        logger.warning("Source document not found for view URL: source_id=%d", source_id)
         raise HTTPException(status_code=404, detail="Source document not found")
 
     await _verify_workspace_access(db, doc.workspace_id, user_id)
@@ -337,6 +342,7 @@ async def delete_source(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     if user.role == "student":
+        logger.warning("Student attempted source deletion: user_id=%s, source_id=%d", user_id, source_id)
         raise HTTPException(status_code=403, detail="Students cannot delete source documents")
 
     result = await db.execute(
@@ -344,6 +350,7 @@ async def delete_source(
     )
     doc = result.scalar_one_or_none()
     if doc is None:
+        logger.warning("Source document not found for deletion: source_id=%d", source_id)
         raise HTTPException(status_code=404, detail="Source document not found")
 
     # Verify the user owns the workspace

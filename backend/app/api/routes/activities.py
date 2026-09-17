@@ -70,6 +70,7 @@ async def evaluate(
       4. Log attempt to mastery history (JSONB).
       5. Return grading result with formative feedback.
     """
+    logger.info("Evaluate request: user_id=%s claim_id=%s", user_id, body.claim_id)
     try:
         result = await evaluate_student_response(
             db=db,
@@ -78,6 +79,7 @@ async def evaluate(
             student_response=body.student_response,
         )
     except ValueError as exc:
+        logger.warning("Evaluate failed: %s", exc)
         raise HTTPException(status_code=404, detail=str(exc))
 
     return EvaluateResult(
@@ -227,6 +229,7 @@ async def create_activity(
                 body.classroom_id,
             )
 
+    logger.info("Activity created: id=%s type=%s creator=%s", activity.id, activity.type, user_id)
     return ActivityResponse.model_validate(activity)
 
 
@@ -244,6 +247,7 @@ async def submit_attempt(
     Evaluates the student's response, updates mastery, awards XP,
     and returns grading feedback.
     """
+    logger.info("Submit attempt: user_id=%s activity_id=%s", user_id, body.activity_id)
     # Validate the activity exists
     activity = (
         await db.execute(select(Activity).where(Activity.id == body.activity_id))
@@ -272,6 +276,7 @@ async def submit_attempt(
             difficulty=activity.difficulty,
         )
     except ValueError as exc:
+        logger.warning("Submit attempt failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
     return AttemptResult(
@@ -346,6 +351,7 @@ async def generate_activities(
     db: AsyncSession = Depends(get_db),
 ) -> list[ActivityResponse]:
     """Auto-generate deterministic activities for a claim."""
+    logger.info("Generate activities: user_id=%s claim_id=%s types=%s", user_id, body.claim_id, body.types)
     claim = await db.get(AtomicClaim, body.claim_id)
     if claim is None:
         raise HTTPException(status_code=404, detail=f"Claim '{body.claim_id}' not found")
@@ -371,6 +377,7 @@ async def generate_deck(
     db: AsyncSession = Depends(get_db),
 ) -> DeckResponse:
     """Generate a flashcard deck with N cards across topics."""
+    logger.info("Generate deck: user_id=%s workspace_id=%s deck_size=%s", user_id, body.workspace_id, body.deck_size)
     try:
         activity = await generate_flashcard_deck(
             db=db,
@@ -380,6 +387,7 @@ async def generate_deck(
             topic_ids=body.topic_ids,
         )
     except ValueError as exc:
+        logger.warning("Generate deck failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
     cards_payload = activity.payload.get("cards", [])
@@ -400,6 +408,7 @@ async def generate_quiz_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> QuizOverviewResponse:
     """Generate a quiz with mixed question types across topics."""
+    logger.info("Generate quiz: user_id=%s workspace_id=%s question_count=%s", user_id, body.workspace_id, body.question_count)
     try:
         activity = await generate_quiz(
             db=db,
@@ -410,6 +419,7 @@ async def generate_quiz_endpoint(
             question_types=body.question_types,
         )
     except ValueError as exc:
+        logger.warning("Generate quiz failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
     questions_payload = activity.payload.get("questions", [])
@@ -441,6 +451,7 @@ async def submit_quiz(
     db: AsyncSession = Depends(get_db),
 ) -> QuizSubmitResponse:
     """Submit all quiz answers at once. Grades each question and returns aggregate results."""
+    logger.info("Submit quiz: user_id=%s activity_id=%s", user_id, activity_id)
     activity = (
         await db.execute(select(Activity).where(Activity.id == activity_id))
     ).scalar_one_or_none()
@@ -457,6 +468,7 @@ async def submit_quiz(
             answers=[a.model_dump() for a in body.answers],
         )
     except ValueError as exc:
+        logger.warning("Submit quiz failed: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
     return QuizSubmitResponse(

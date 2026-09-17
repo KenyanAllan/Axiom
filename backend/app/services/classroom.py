@@ -64,7 +64,8 @@ async def create_classroom(
         join_code=code,
     )
     db.add(classroom)
-    await db.flush()  # Populate classroom.id
+    await db.flush()
+    logger.info("Classroom created: id=%s teacher_id=%s title=%s", classroom.id, teacher_id, title)
 
     # Auto-provision shared workspace (spec 8.2)
     workspace = Workspace(
@@ -92,6 +93,8 @@ async def join_classroom(
     Returns {classroom_id, classroom_title, workspace_id}.
     Raises ValueError on invalid code or duplicate enrollment.
     """
+    logger.info("Join classroom: student_id=%s join_code=%s", student_id, join_code)
+
     # 1. Validate join_code
     result = await db.execute(
         select(Classroom)
@@ -380,6 +383,7 @@ async def get_classroom_activity_history(
     offset: int = 0,
 ) -> dict:
     """Return chronological activity attempts for all students in a classroom."""
+    logger.info("Get classroom activity history: classroom_id=%s teacher_id=%s", classroom_id, teacher_id)
     from app.models.tables import ActivityAttempt, AtomicClaim
 
     classroom = (
@@ -456,6 +460,8 @@ async def broadcast_activity_to_class(
         )
     )
     student_ids = [row[0] for row in enrollments_result.all()]
+
+    logger.info("Broadcasting activity_id=%s to classroom_id=%s (%d students)", activity_id, classroom_id, len(student_ids))
 
     if not student_ids:
         return
