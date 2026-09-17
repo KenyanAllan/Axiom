@@ -43,6 +43,7 @@ export interface UserProfile {
   avatar?: string;
   password?: string;
   preferred_language?: string;
+  workspace_id?: number;
 }
 
 export interface ClaimCard {

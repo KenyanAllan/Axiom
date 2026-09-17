@@ -27,6 +27,13 @@ import type {
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const DEMO_WORKSPACE_ID = 1;
 export const TOKEN_KEY = "axiom_token";
+export const WORKSPACE_KEY = "axiom_workspace_id";
+
+function getWorkspaceId(): number {
+  if (typeof window === "undefined") return DEMO_WORKSPACE_ID;
+  const stored = localStorage.getItem(WORKSPACE_KEY);
+  return stored ? parseInt(stored, 10) : DEMO_WORKSPACE_ID;
+}
 
 export function authOnly(userId: string): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
@@ -229,7 +236,7 @@ export async function fetchUserHistory(
 
 export async function fetchTopics(
   userId: string,
-  workspaceId = DEMO_WORKSPACE_ID
+  workspaceId = getWorkspaceId()
 ): Promise<TopicSummary[]> {
   const res = await fetch(
     `${BASE}/api/topics?workspace_id=${workspaceId}`,
@@ -241,7 +248,7 @@ export async function fetchTopics(
 
 export async function fetchClaims(
   userId: string,
-  workspaceId = DEMO_WORKSPACE_ID
+  workspaceId = getWorkspaceId()
 ): Promise<ClaimResponse[]> {
   const res = await fetch(
     `${BASE}/api/claims?workspace_id=${workspaceId}&limit=200`,
@@ -255,7 +262,7 @@ export async function createTopic(
   userId: string,
   title: string,
   summary?: string,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = getWorkspaceId()
 ): Promise<TopicSummary> {
   const res = await fetch(`${BASE}/api/topics`, {
     method: "POST",
@@ -336,7 +343,7 @@ export async function deleteClaim(
 
 export async function fetchGraph(
   userId: string,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = getWorkspaceId()
 ): Promise<GraphResponse> {
   const res = await fetch(`${BASE}/api/dag/graph?workspace_id=${workspaceId}`, {
     headers: headers(userId),
@@ -362,7 +369,7 @@ function mapApiSource(src: ApiSourceDocument): SourceDocument {
 
 export async function listSourceDocs(
   userId: string,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = getWorkspaceId()
 ): Promise<SourceDocument[]> {
   const res = await fetch(
     `${BASE}/api/sources?workspace_id=${workspaceId}`,
@@ -376,7 +383,7 @@ export async function listSourceDocs(
 export async function uploadSourceDoc(
   userId: string,
   file: File,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = getWorkspaceId()
 ): Promise<SourceDocument> {
   const form = new FormData();
   form.append("file", file);
@@ -424,7 +431,7 @@ export async function getSourceViewUrl(
 
 export async function listFigures(
   userId: string,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = getWorkspaceId()
 ): Promise<Figure[]> {
   const res = await fetch(
     `${BASE}/api/figures?workspace_id=${workspaceId}`,
@@ -486,7 +493,7 @@ export async function deleteFigure(
 export async function createChatSession(
   userId: string,
   title?: string,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = getWorkspaceId()
 ): Promise<ChatSessionResponse> {
   const res = await fetch(`${BASE}/api/chat/sessions`, {
     method: "POST",
@@ -499,7 +506,7 @@ export async function createChatSession(
 
 export async function listChatSessions(
   userId: string,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = getWorkspaceId()
 ): Promise<ChatSessionListItem[]> {
   const res = await fetch(
     `${BASE}/api/chat/sessions?workspace_id=${workspaceId}`,
@@ -839,7 +846,7 @@ export async function fetchClassroomChatSession(
 
 export async function fetchGlossaryTerms(
   userId: string,
-  workspaceId: number = DEMO_WORKSPACE_ID
+  workspaceId: number = getWorkspaceId()
 ): Promise<GlossaryTermResponse[]> {
   const res = await fetch(
     `${BASE}/api/glossary?workspace_id=${workspaceId}`,
@@ -852,7 +859,7 @@ export async function fetchGlossaryTerms(
 export async function searchGlossary(
   userId: string,
   query: string,
-  workspaceId: number = DEMO_WORKSPACE_ID,
+  workspaceId: number = getWorkspaceId(),
   limit: number = 20
 ): Promise<GlossarySearchResponse> {
   const res = await fetch(`${BASE}/api/glossary/search`, {
@@ -868,7 +875,7 @@ export async function createGlossaryTerm(
   userId: string,
   term: string,
   definition: string,
-  workspaceId: number = DEMO_WORKSPACE_ID,
+  workspaceId: number = getWorkspaceId(),
   sourceDocumentId?: number
 ): Promise<GlossaryTermResponse> {
   const payload: Record<string, unknown> = { workspace_id: workspaceId, term, definition };
@@ -934,7 +941,7 @@ export async function generateAudioOverview(
   const res = await fetch(`${BASE}/api/audio/generate-overview`, {
     method: "POST",
     headers: headers(userId),
-    body: JSON.stringify({ workspace_id: body.workspace_id ?? DEMO_WORKSPACE_ID, ...body }),
+    body: JSON.stringify({ workspace_id: body.workspace_id ?? getWorkspaceId(), ...body }),
   });
   if (!res.ok) { handle401(res); throw new Error(`Audio overview generation failed: ${res.status}`); }
   return res.json();

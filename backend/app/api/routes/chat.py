@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -382,7 +382,7 @@ async def delete_session(
     session_id: int,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+) -> Response:
     """Delete a chat session and all its messages."""
     stmt = select(ChatSession).where(
         ChatSession.id == session_id,
@@ -393,6 +393,7 @@ async def delete_session(
         raise HTTPException(status_code=404, detail="Chat session not found")
     await db.delete(session)
     await db.flush()
+    return Response(status_code=204)
 
 
 @router.post(

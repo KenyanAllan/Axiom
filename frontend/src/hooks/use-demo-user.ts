@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import type { UserProfile } from "@/lib/types";
-import { TOKEN_KEY } from "@/lib/api";
+import { TOKEN_KEY, WORKSPACE_KEY } from "@/lib/api";
 
 const STORAGE_KEY = "axiom_current_user";
 
@@ -59,6 +59,7 @@ export function useDemoUser() {
   const login = useCallback((id: string) => {
     if (allUsers[id]) {
       localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(WORKSPACE_KEY);
       setUserId(id);
       localStorage.setItem(STORAGE_KEY, id);
     }
@@ -67,6 +68,9 @@ export function useDemoUser() {
   const loginWithToken = useCallback((token: string, profile: UserProfile) => {
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(STORAGE_KEY, profile.id);
+    if (profile.workspace_id) {
+      localStorage.setItem(WORKSPACE_KEY, String(profile.workspace_id));
+    }
     const updated = { ...allUsers, [profile.id]: profile };
     setAllUsers(updated);
     saveCustomUsers(updated);
@@ -93,10 +97,12 @@ export function useDemoUser() {
     setUserId(null);
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(WORKSPACE_KEY);
   }, []);
 
   const switchUser = useCallback((id: string) => {
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(WORKSPACE_KEY);
     login(id);
   }, [login]);
 

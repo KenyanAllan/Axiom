@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import create_access_token, hash_password, verify_password
 from app.core.database import get_db
 from app.core.rate_limit import limiter
-from app.models.tables import User
+from app.models.tables import User, Workspace
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -59,6 +59,7 @@ class UserOut(BaseModel):
     level: int
     streak_days: int
     last_active_date: str | None = None
+    workspace_id: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -101,11 +102,21 @@ async def register(
     db.add(user)
     await db.flush()
 
+    workspace = Workspace(
+        user_id=user_id,
+        title=f"{body.display_name}'s Workbench",
+        is_classroom_shared=False,
+    )
+    db.add(workspace)
+    await db.flush()
+
     token = create_access_token(user_id)
-    logger.info("User registered: user_id=%s email=%s", user_id, body.email)
+    logger.info("User registered: user_id=%s email=%s workspace_id=%d", user_id, body.email, workspace.id)
+    user_out = UserOut.model_validate(user)
+    user_out.workspace_id = workspace.id
     return AuthResponse(
         access_token=token,
-        user=UserOut.model_validate(user),
+        user=user_out,
     )
 
 
@@ -136,9 +147,16 @@ async def login(
             detail="Invalid email or password.",
         )
 
+    ws_result = await db.execute(
+        select(Workspace.id).where(Workspace.user_id == user.id).limit(1)
+    )
+    ws_id = ws_result.scalar_one_or_none()
+
     token = create_access_token(user.id)
     logger.info("User logged in: user_id=%s", user.id)
+    user_out = UserOut.model_validate(user)
+    user_out.workspace_id = ws_id
     return AuthResponse(
         access_token=token,
-        user=UserOut.model_validate(user),
+        user=user_out,
     )
