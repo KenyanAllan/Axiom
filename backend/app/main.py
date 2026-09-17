@@ -68,6 +68,7 @@ from app.api.routes.sources import router as sources_router
 from app.api.routes.search import router as search_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.dag import router as dag_router
+from app.api.routes.claims import router as claims_router
 
 app.include_router(auth_router)
 app.include_router(activities_router)
@@ -79,6 +80,7 @@ app.include_router(sources_router)
 app.include_router(search_router)
 app.include_router(chat_router)
 app.include_router(dag_router)
+app.include_router(claims_router)
 
 
 # ── Health check ─────────────────────────────────────────────────────────────

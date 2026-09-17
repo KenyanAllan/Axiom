@@ -7,7 +7,11 @@ import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { NavPanel } from "@/components/layout/NavPanel";
 import { CenterStage } from "@/components/layout/CenterStage";
 import { RightSidebar } from "@/components/layout/RightSidebar";
-import { ActivityOverlay } from "@/components/activity/ActivityFeed";
+import {
+  ActivityOverlay,
+  INITIAL_ACTIVITIES,
+} from "@/components/activity/ActivityFeed";
+import type { Activity } from "@/components/activity/ActivityFeed";
 import { useDemoUser } from "@/hooks/use-demo-user";
 import type { ViewTab } from "@/lib/types";
 
@@ -19,6 +23,8 @@ export default function Home() {
   const [expandedActivityId, setExpandedActivityId] = useState<string | null>(
     null
   );
+  const [activities, setActivities] =
+    useState<Activity[]>(INITIAL_ACTIVITIES);
 
   useEffect(() => {
     setMounted(true);
@@ -71,6 +77,8 @@ export default function Home() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           userRole={user.role}
+          activities={activities}
+          onActivitiesChange={setActivities}
           onExpandActivity={handleExpandActivity}
         />
         <RightSidebar
@@ -83,6 +91,7 @@ export default function Home() {
       {expandedActivityId && (
         <ActivityOverlay
           activityId={expandedActivityId}
+          activities={activities}
           onClose={handleCloseActivity}
         />
       )}

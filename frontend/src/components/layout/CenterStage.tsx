@@ -23,9 +23,13 @@ import {
   X,
   Anchor,
   Paperclip,
+  Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
+import type { Activity } from "@/components/activity/ActivityFeed";
 import { SourceDocsManager } from "@/components/sources/SourceDocsManager";
 import { TeacherDashboard } from "@/components/dashboard/TeacherDashboard";
 import type { UserRole, ViewTab } from "@/lib/types";
@@ -36,6 +40,8 @@ interface CenterStageProps {
   activeTab: ViewTab;
   onTabChange: (tab: ViewTab) => void;
   userRole: UserRole;
+  activities: Activity[];
+  onActivitiesChange: (activities: Activity[]) => void;
   onExpandActivity: (id: string) => void;
 }
 
@@ -71,7 +77,9 @@ interface WikiPage {
   claims: WikiClaim[];
 }
 
-const WIKI_PAGES: WikiPage[] = [
+let _wikiCounter = 200;
+
+const INITIAL_WIKI_PAGES: WikiPage[] = [
   {
     id: "ge",
     title: "Gaussian Elimination",
@@ -346,6 +354,8 @@ export function CenterStage({
   activeTab,
   onTabChange,
   userRole,
+  activities,
+  onActivitiesChange,
   onExpandActivity,
 }: CenterStageProps) {
   const isTeacher = userRole === "teacher";
@@ -353,6 +363,7 @@ export function CenterStage({
   const [input, setInput] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [chatContext, setChatContext] = useState<ChatContextItem[]>([]);
+  const [wikiPages, setWikiPages] = useState<WikiPage[]>(INITIAL_WIKI_PAGES);
   const [wikiPageId, setWikiPageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recRef = useRef<any>(null);
@@ -379,13 +390,13 @@ export function CenterStage({
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
-      const page = WIKI_PAGES.find((p) => p.id === nodeId);
+      const page = wikiPages.find((p) => p.id === nodeId);
       if (page) {
         setWikiPageId(page.id);
         onTabChange("wiki");
       }
     },
-    [onTabChange]
+    [onTabChange, wikiPages]
   );
 
   const sendMessage = useCallback(
@@ -505,7 +516,11 @@ export function CenterStage({
         {/* ── Tab content ──────────────────────────────────────────────── */}
 
         <TabsContent value="activity" className="flex-1 overflow-y-auto">
-          <ActivityFeed onExpandActivity={onExpandActivity} />
+          <ActivityFeed
+              activities={activities}
+              onActivitiesChange={onActivitiesChange}
+              onExpandActivity={onExpandActivity}
+            />
         </TabsContent>
 
         <TabsContent value="chat" className="flex-1 overflow-hidden">
@@ -531,9 +546,12 @@ export function CenterStage({
 
         <TabsContent value="wiki" className="flex-1 overflow-y-auto">
           <DemoWikiTab
+            pages={wikiPages}
+            onPagesChange={setWikiPages}
             selectedPageId={wikiPageId}
             onSelectPage={setWikiPageId}
             onClaimClick={addClaimContext}
+            isTeacher={isTeacher}
           />
         </TabsContent>
 
@@ -729,122 +747,496 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 // ── Demo Wiki Tab ─────────────────────────────────────────────────────────────
 
 interface DemoWikiTabProps {
+  pages: WikiPage[];
+  onPagesChange: (pages: WikiPage[]) => void;
   selectedPageId: string | null;
   onSelectPage: (id: string | null) => void;
   onClaimClick: (claim: WikiClaim, pageTitle: string) => void;
+  isTeacher: boolean;
 }
 
+type WikiMode =
+  | "view"
+  | "create-page"
+  | "edit-page"
+  | "create-claim"
+  | "edit-claim";
+
 function DemoWikiTab({
+  pages,
+  onPagesChange,
   selectedPageId,
   onSelectPage,
   onClaimClick,
+  isTeacher,
 }: DemoWikiTabProps) {
-  const page = WIKI_PAGES.find((p) => p.id === selectedPageId);
+  const [mode, setMode] = useState<WikiMode>("view");
+  const [editClaimId, setEditClaimId] = useState<string | null>(null);
+
+  // Form fields
+  const [fTitle, setFTitle] = useState("");
+  const [fAliases, setFAliases] = useState("");
+  const [fSnippet, setFSnippet] = useState("");
+  const [fCTitle, setFCTitle] = useState("");
+  const [fCDesc, setFCDesc] = useState("");
+  const [fCAnchors, setFCAnchors] = useState("");
+
+  const page = pages.find((p) => p.id === selectedPageId);
+
+  const todayStr = () =>
+    new Date().toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+
+  const parseCSV = (s: string) =>
+    s
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+  // ── Page CRUD ─────────────────────────────────────────────────────────────
+
+  const startCreatePage = () => {
+    setFTitle("");
+    setFAliases("");
+    setFSnippet("");
+    setMode("create-page");
+  };
+
+  const startEditPage = () => {
+    if (!page) return;
+    setFTitle(page.title);
+    setFAliases(page.aliases.join(", "));
+    setFSnippet(page.snippet);
+    setMode("edit-page");
+  };
+
+  const savePage = () => {
+    if (!fTitle.trim()) return;
+    if (mode === "create-page") {
+      const id = `wiki_${++_wikiCounter}`;
+      const newPage: WikiPage = {
+        id,
+        title: fTitle.trim(),
+        aliases: parseCSV(fAliases),
+        snippet: fSnippet.trim(),
+        updated: todayStr(),
+        claims: [],
+      };
+      onPagesChange([...pages, newPage]);
+      onSelectPage(id);
+    } else if (mode === "edit-page" && page) {
+      onPagesChange(
+        pages.map((p) =>
+          p.id === page.id
+            ? {
+                ...p,
+                title: fTitle.trim(),
+                aliases: parseCSV(fAliases),
+                snippet: fSnippet.trim(),
+                updated: todayStr(),
+              }
+            : p
+        )
+      );
+    }
+    setMode("view");
+  };
+
+  const deletePage = (id: string) => {
+    onPagesChange(pages.filter((p) => p.id !== id));
+    if (selectedPageId === id) onSelectPage(null);
+  };
+
+  // ── Claim CRUD ────────────────────────────────────────────────────────────
+
+  const startCreateClaim = () => {
+    setFCTitle("");
+    setFCDesc("");
+    setFCAnchors("");
+    setMode("create-claim");
+  };
+
+  const startEditClaim = (c: WikiClaim) => {
+    setEditClaimId(c.id);
+    setFCTitle(c.title);
+    setFCDesc(c.description);
+    setFCAnchors(c.anchors.join(", "));
+    setMode("edit-claim");
+  };
+
+  const saveClaim = () => {
+    if (!page || !fCTitle.trim()) return;
+    const data = {
+      title: fCTitle.trim(),
+      description: fCDesc.trim(),
+      anchors: parseCSV(fCAnchors),
+    };
+    if (mode === "create-claim") {
+      const newClaim: WikiClaim = {
+        id: `claim_${++_wikiCounter}`,
+        ...data,
+      };
+      onPagesChange(
+        pages.map((p) =>
+          p.id === page.id
+            ? { ...p, claims: [...p.claims, newClaim] }
+            : p
+        )
+      );
+    } else if (mode === "edit-claim" && editClaimId) {
+      onPagesChange(
+        pages.map((p) =>
+          p.id === page.id
+            ? {
+                ...p,
+                claims: p.claims.map((c) =>
+                  c.id === editClaimId ? { ...c, ...data } : c
+                ),
+              }
+            : p
+        )
+      );
+    }
+    setMode("view");
+    setEditClaimId(null);
+  };
+
+  const deleteClaim = (claimId: string) => {
+    if (!page) return;
+    onPagesChange(
+      pages.map((p) =>
+        p.id === page.id
+          ? { ...p, claims: p.claims.filter((c) => c.id !== claimId) }
+          : p
+      )
+    );
+  };
+
+  // ── Shared form components ────────────────────────────────────────────────
+
+  const inputCls =
+    "w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring";
+
+  const PageForm = () => (
+    <div className="mb-4 rounded-lg border bg-card px-5 py-4">
+      <p className="mb-3 text-sm font-semibold">
+        {mode === "create-page" ? "New Wiki Page" : "Edit Wiki Page"}
+      </p>
+      <div className="space-y-3">
+        <input
+          className={inputCls}
+          placeholder="Page title"
+          value={fTitle}
+          onChange={(e) => setFTitle(e.target.value)}
+          autoFocus
+        />
+        <input
+          className={inputCls}
+          placeholder="Aliases (comma-separated)"
+          value={fAliases}
+          onChange={(e) => setFAliases(e.target.value)}
+        />
+        <textarea
+          className={`${inputCls} min-h-[80px] resize-none`}
+          placeholder="Description / summary"
+          value={fSnippet}
+          onChange={(e) => setFSnippet(e.target.value)}
+          rows={3}
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setMode("view")}
+            className="rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={savePage}
+            disabled={!fTitle.trim()}
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const ClaimForm = () => (
+    <div className="mb-3 rounded-lg border bg-card px-5 py-4">
+      <p className="mb-3 text-sm font-semibold">
+        {mode === "create-claim" ? "New Claim" : "Edit Claim"}
+      </p>
+      <div className="space-y-3">
+        <input
+          className={inputCls}
+          placeholder="Claim title"
+          value={fCTitle}
+          onChange={(e) => setFCTitle(e.target.value)}
+          autoFocus
+        />
+        <textarea
+          className={`${inputCls} min-h-[60px] resize-none`}
+          placeholder="Description"
+          value={fCDesc}
+          onChange={(e) => setFCDesc(e.target.value)}
+          rows={2}
+        />
+        <input
+          className={inputCls}
+          placeholder="Anchors / sources (comma-separated)"
+          value={fCAnchors}
+          onChange={(e) => setFCAnchors(e.target.value)}
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => {
+              setMode("view");
+              setEditClaimId(null);
+            }}
+            className="rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={saveClaim}
+            disabled={!fCTitle.trim()}
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Detail view ───────────────────────────────────────────────────────────
 
   if (page) {
     return (
       <div className="px-6 py-5">
-        <button
-          onClick={() => onSelectPage(null)}
-          className="mb-4 text-sm text-primary hover:text-primary/80"
-        >
-          &larr; Back to all pages
-        </button>
-        <h2 className="text-xl font-bold">{page.title}</h2>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          {page.aliases.map((alias) => (
-            <span
-              key={alias}
-              className="rounded-full bg-secondary px-2.5 py-0.5 text-[11px] text-muted-foreground"
-            >
-              {alias}
-            </span>
-          ))}
-        </div>
-        <p className="mt-1 font-mono text-xs text-muted-foreground">
-          {page.claims.length} atomic claims &middot; Updated {page.updated}
-        </p>
-        <div className="mt-5 space-y-4 text-sm leading-relaxed text-foreground/80">
-          <p>{page.snippet}</p>
-
-          <div className="space-y-3">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-              Atomic Claims
-            </p>
-            {page.claims.map((claim) => (
+        <div className="mb-4 flex items-center justify-between">
+          <button
+            onClick={() => {
+              onSelectPage(null);
+              setMode("view");
+            }}
+            className="text-sm text-primary hover:text-primary/80"
+          >
+            &larr; Back to all pages
+          </button>
+          {isTeacher && mode === "view" && (
+            <div className="flex items-center gap-1.5">
               <button
-                key={claim.id}
-                onClick={() => onClaimClick(claim, page.title)}
-                className="block w-full rounded-lg border bg-card px-5 py-4 text-left transition-colors hover:border-primary/30 hover:bg-primary/5"
+                onClick={startEditPage}
+                className="flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
               >
-                <p className="text-sm font-semibold text-foreground">
-                  {claim.title}
-                </p>
-                <p className="mt-1 text-sm text-foreground/70">
-                  {claim.description}
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {claim.anchors.map((anchor) => (
-                    <span
-                      key={anchor}
-                      className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
-                    >
-                      <Anchor className="h-2.5 w-2.5" />
-                      {anchor}
-                    </span>
-                  ))}
-                </div>
-                <p className="mt-2 text-[10px] italic text-primary">
-                  Click to add to chat context
-                </p>
+                <Pencil className="h-3 w-3" />
+                Edit
               </button>
-            ))}
-          </div>
+              <button
+                onClick={() => deletePage(page.id)}
+                className="flex items-center gap-1 rounded-md border border-red-200 px-2.5 py-1 text-xs text-red-500 hover:bg-red-50"
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete
+              </button>
+            </div>
+          )}
         </div>
+
+        {(mode === "edit-page" || mode === "create-page") && <PageForm />}
+
+        {mode !== "edit-page" && (
+          <>
+            <h2 className="text-xl font-bold">{page.title}</h2>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {page.aliases.map((alias) => (
+                <span
+                  key={alias}
+                  className="rounded-full bg-secondary px-2.5 py-0.5 text-[11px] text-muted-foreground"
+                >
+                  {alias}
+                </span>
+              ))}
+            </div>
+            <p className="mt-1 font-mono text-xs text-muted-foreground">
+              {page.claims.length} atomic claims &middot; Updated{" "}
+              {page.updated}
+            </p>
+            <div className="mt-5 space-y-4 text-sm leading-relaxed text-foreground/80">
+              <p>{page.snippet}</p>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                    Atomic Claims
+                  </p>
+                  {isTeacher && mode === "view" && (
+                    <button
+                      onClick={startCreateClaim}
+                      className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add Claim
+                    </button>
+                  )}
+                </div>
+
+                {(mode === "create-claim" || mode === "edit-claim") && (
+                  <ClaimForm />
+                )}
+
+                {page.claims.map((claim) => (
+                  <div
+                    key={claim.id}
+                    className="group/claim rounded-lg border bg-card px-5 py-4 transition-colors hover:border-primary/30 hover:bg-primary/5"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <button
+                        onClick={() => onClaimClick(claim, page.title)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <p className="text-sm font-semibold text-foreground">
+                          {claim.title}
+                        </p>
+                        <p className="mt-1 text-sm text-foreground/70">
+                          {claim.description}
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {claim.anchors.map((anchor) => (
+                            <span
+                              key={anchor}
+                              className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 font-mono text-[10px] text-muted-foreground"
+                            >
+                              <Anchor className="h-2.5 w-2.5" />
+                              {anchor}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-[10px] italic text-primary">
+                          Click to add to chat context
+                        </p>
+                      </button>
+                      {isTeacher && mode === "view" && (
+                        <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/claim:opacity-100">
+                          <button
+                            onClick={() => startEditClaim(claim)}
+                            className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                            title="Edit claim"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteClaim(claim.id)}
+                            className="flex h-7 w-7 items-center justify-center rounded text-red-400 hover:bg-red-50 hover:text-red-600"
+                            title="Delete claim"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {page.claims.length === 0 && (
+                  <p className="py-4 text-center text-sm text-muted-foreground">
+                    No claims yet.{" "}
+                    {isTeacher && "Click \"Add Claim\" to create one."}
+                  </p>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     );
   }
 
+  // ── List view ─────────────────────────────────────────────────────────────
+
   return (
     <div className="px-6 py-5">
-      <h2 className="text-lg font-bold">Wiki</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Knowledge base generated from your source documents.
-      </p>
-      <div className="mt-5 space-y-2">
-        {WIKI_PAGES.map((wp) => (
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold">Wiki</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Knowledge base generated from your source documents.
+          </p>
+        </div>
+        {isTeacher && mode === "view" && (
           <button
-            key={wp.id}
-            onClick={() => onSelectPage(wp.id)}
-            className="flex w-full items-center gap-4 rounded-lg border bg-card px-5 py-4 text-left transition-colors hover:bg-accent/30"
+            onClick={startCreatePage}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
           >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary">
-              <BookText className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">{wp.title}</p>
-              <div className="mt-0.5 flex gap-1">
-                {wp.aliases.slice(0, 3).map((a) => (
-                  <span
-                    key={a}
-                    className="rounded bg-secondary px-1.5 py-0 text-[10px] text-muted-foreground"
-                  >
-                    {a}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="shrink-0 text-right">
-              <p className="font-mono text-xs text-muted-foreground">
-                {wp.claims.length} claims
-              </p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {wp.updated}
-              </p>
-            </div>
-            <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <Plus className="h-3.5 w-3.5" />
+            New Page
           </button>
+        )}
+      </div>
+
+      {(mode === "create-page" || mode === "edit-page") && (
+        <div className="mt-4">
+          <PageForm />
+        </div>
+      )}
+
+      <div className="mt-5 space-y-2">
+        {pages.map((wp) => (
+          <div
+            key={wp.id}
+            className="group/row flex w-full items-center gap-4 rounded-lg border bg-card px-5 py-4 transition-colors hover:bg-accent/30"
+          >
+            <button
+              onClick={() => onSelectPage(wp.id)}
+              className="flex min-w-0 flex-1 items-center gap-4 text-left"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary">
+                <BookText className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">{wp.title}</p>
+                <div className="mt-0.5 flex gap-1">
+                  {wp.aliases.slice(0, 3).map((a) => (
+                    <span
+                      key={a}
+                      className="rounded bg-secondary px-1.5 py-0 text-[10px] text-muted-foreground"
+                    >
+                      {a}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="font-mono text-xs text-muted-foreground">
+                  {wp.claims.length} claims
+                </p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  {wp.updated}
+                </p>
+              </div>
+              <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            </button>
+            {isTeacher && (
+              <button
+                onClick={() => deletePage(wp.id)}
+                className="shrink-0 opacity-0 transition-opacity group-hover/row:opacity-100"
+                title="Delete page"
+              >
+                <Trash2 className="h-4 w-4 text-red-400 hover:text-red-600" />
+              </button>
+            )}
+          </div>
         ))}
+        {pages.length === 0 && (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            No wiki pages yet.{" "}
+            {isTeacher && "Click \"New Page\" to get started."}
+          </p>
+        )}
       </div>
     </div>
   );
